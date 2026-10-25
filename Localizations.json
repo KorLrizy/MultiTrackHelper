@@ -1,0 +1,447 @@
+{
+  "mth.MultiTrackHelper": {
+    "English": "Multi Track Helper",
+    "ChineseSimplified": "多轨道助手",
+    "ChineseTraditional": "多軌道助手"
+  },
+  "mth.affectTileRangeFrom": {
+    "English": "Affected Tile Range From",
+    "ChineseSimplified": "影响方块从",
+    "ChineseTraditional": "影響方塊從"
+  },
+  "mth.affectTileRangeTo": {
+    "English": "Affected Tile Range To",
+    "ChineseSimplified": "影响方块到",
+    "ChineseTraditional": "影響方塊到"
+  },
+  "mth.affectAt": {
+    "English": "Affect At",
+    "ChineseSimplified": "作用于",
+    "ChineseTraditional": "作用於"
+  },
+  "mth.startTile": {
+    "English": "Start Tile",
+    "ChineseSimplified": "效果起始方块",
+    "ChineseTraditional": "效果起始方塊"
+  },
+  "mth.xPosOffsetRange": {
+    "English": "X Position Offset Range",
+    "ChineseSimplified": "X位置偏移范围",
+    "ChineseTraditional": "X位置偏移範圍"
+  },
+  "mth.yPosOffsetRange": {
+    "English": "Y Position Offset Range",
+    "ChineseSimplified": "Y位置偏移范围",
+    "ChineseTraditional": "Y位置偏移範圍"
+  },
+  "mth.rotationOffsetRange": {
+    "English": "Rotation Offset Range",
+    "ChineseSimplified": "旋转偏移范围",
+    "ChineseTraditional": "旋轉偏移範圍"
+  },
+  "mth.parallaxRange": {
+    "English": "Parallax Range",
+    "ChineseSimplified": "平行范围",
+    "ChineseTraditional": "平行範圍"
+  },
+  "mth.parallaxRevertTo": {
+    "English": "Parallax Revert To",
+    "ChineseSimplified": "平行恢复到",
+    "ChineseTraditional": "平行恢復到"
+  },
+  "mth.scaleRange": {
+    "English": "Scale Range",
+    "ChineseSimplified": "大小范围",
+    "ChineseTraditional": "大小範圍"
+  },
+  "mth.scaleRevertTo": {
+    "English": "Scale Revert To",
+    "ChineseSimplified": "大小恢复到",
+    "ChineseTraditional": "大小恢復到"
+  },
+  "mth.positionTrackScale": {
+    "English": "Position Track Scale Range",
+    "ChineseSimplified": "轨道位置大小范围",
+    "ChineseTraditional": "軌道位置大小範圍"
+  },
+  "mth.positionTrackOpacity": {
+    "English": "Position Track Opacity Range",
+    "ChineseSimplified": "轨道位置透明度范围",
+    "ChineseTraditional": "軌道位置透明度範圍"
+  },
+  "mth.scaleRadiusScale": {
+    "English": "Scale Radius Range",
+    "ChineseSimplified": "星球半径大小范围",
+    "ChineseTraditional": "星球半徑大小範圍"
+  },
+  "mth.scalePlanetsScale": {
+    "English": "Scale Planets Range",
+    "ChineseSimplified": "缩放行星范围",
+    "ChineseTraditional": "縮放行星範圍"
+  },
+  "mth.trackDistribution": {
+    "English": "Track Distribution Style",
+    "ChineseSimplified": "轨道分布方式",
+    "ChineseTraditional": "軌道分佈方式"
+  },
+  "mth.trackGenerationMode": {
+    "English": "Track Generation Mode (Centralized Only)",
+    "ChineseSimplified": "多轨生成方式（仅集中式）",
+    "ChineseTraditional": "多軌生成方式（僅集中式）"
+  },
+  "mth.generationModeLimit": {
+    "English": "Common Pivot Limitation",
+    "ChineseSimplified": "共用轴心限制",
+    "ChineseTraditional": "共用軸心限制"
+  },
+  "mth.trackGenerationModeNote": {
+    "English": "Pivot Offset makes every fake track share one pivot, which conflicts with per-tile spin and scaling, so 'Copy Move Track' is turned off and greyed out automatically. Sync size, opacity, style, depth, planets and parallax still work. Switch back to Position or Distributed to enable it again by hand. Affects newly generated or rebuilt tracks only; existing tracks are not converted and planet paths stay unchanged.",
+    "ChineseSimplified": "轴心偏移让所有假轨道共用同一个轴心，与真砖逐砖自转、缩放冲突，因此“同步移动轨道”会自动关闭并置灰；同步大小、透明度、风格、深度、星球、视差不受影响。改回“位置”或选分布式后可手动重新开启。仅影响新生成或重建的轨道，不会转换已有轨道，也不改变星球轨迹。",
+    "ChineseTraditional": "軸心偏移讓所有假軌道共用同一個軸心，與真磚逐磚自轉、縮放衝突，因此「同步移動軌道」會自動關閉並置灰；同步大小、透明度、風格、深度、星球、視差不受影響。改回「位置」或選分佈式後可手動重新開啟。僅影響新生成或重建的軌道，不會轉換已有軌道，也不改變星球軌跡。"
+  },
+  "editor.trackGenerationMode.help": {
+    "English": "Only available for centralized generation. Position gives each track its own center for rotation and scaling. Pivot Offset keeps Generation Position as the common pivot, which conflicts with per-tile spin and scaling, so 'Copy Move Track' is turned off and greyed out automatically. Sync size, opacity, style, depth, planets and parallax are unaffected. Switch back to Position or Distributed to enable it again by hand. Changing this option affects newly generated or rebuilt tracks only; it does not convert existing objects or change planet paths.",
+    "ChineseSimplified": "仅集中式生成可用。“位置”让每块假轨道绕自身中心旋转、缩放；“轴心偏移”保留生成位置为共用轴心，与真砖逐砖自转、缩放冲突，因此会自动关闭并置灰“同步移动轨道”。同步大小、透明度、风格、深度、星球、视差等支持的功能不受影响；改回“位置”或选分布式后可手动重新开启。切换仅影响新生成或重建的轨道，不会转换已有对象，也不改变星球轨迹。",
+    "ChineseTraditional": "僅集中式生成可用。「位置」讓每塊假軌道繞自身中心旋轉、縮放；「軸心偏移」保留生成位置為共用軸心，與真磚逐磚自轉、縮放衝突，因此會自動關閉並置灰「同步移動軌道」。同步大小、透明度、風格、深度、星球、視差等支援的功能不受影響；改回「位置」或選分佈式後可手動重新開啟。切換僅影響新生成或重建的軌道，不會轉換已有物件，也不改變星球軌跡。"
+  },
+  "mth.rotation": {
+    "English": "Track Rotation",
+    "ChineseSimplified": "轨道旋转角度",
+    "ChineseTraditional": "軌道旋轉角度"
+  },
+  "mth.syncSize": {
+    "English": "Sync Track Size",
+    "ChineseSimplified": "同步轨道大小",
+    "ChineseTraditional": "同步軌道大小"
+  },
+  "mth.syncOpacity": {
+    "English": "Sync Track Opacity",
+    "ChineseSimplified": "同步轨道透明度",
+    "ChineseTraditional": "同步軌道透明度"
+  },
+  "mth.opacitySyncType": {
+    "English": "Opacity Sync Mode",
+    "ChineseSimplified": "透明度同步方式",
+    "ChineseTraditional": "透明度同步方式"
+  },
+  "mth.syncStyle": {
+    "English": "Sync Track Style",
+    "ChineseSimplified": "同步轨道风格",
+    "ChineseTraditional": "同步軌道風格"
+  },
+  "mth.syncMoveTrack": {
+    "English": "Copy Move Track",
+    "ChineseSimplified": "同步移动轨道",
+    "ChineseTraditional": "同步移動軌道"
+  },
+  "mth.useIncreasingDepth": {
+    "English": "Enable Increasing Depth",
+    "ChineseSimplified": "是否使用深度递增",
+    "ChineseTraditional": "是否使用深度遞增"
+  },
+  "mth.initialDepth": {
+    "English": "Initial Depth",
+    "ChineseSimplified": "初始深度",
+    "ChineseTraditional": "初始深度"
+  },
+  "mth.increasingValue": {
+    "English": "Increasing Value",
+    "ChineseSimplified": "递增值",
+    "ChineseTraditional": "遞增值"
+  },
+  "mth.generationPosition": {
+    "English": "Generation Position",
+    "ChineseSimplified": "生成位置",
+    "ChineseTraditional": "生成位置"
+  },
+  "mth.depth": {
+    "English": "Depth",
+    "ChineseSimplified": "深度",
+    "ChineseTraditional": "深度"
+  },
+  "mth.TrackAnimation": {
+    "English": "Track Animation",
+    "ChineseSimplified": "轨道动画",
+    "ChineseTraditional": "軌道動畫"
+  },
+  "mth.tag": {
+    "English": "Tag",
+    "ChineseSimplified": "标签",
+    "ChineseTraditional": "標籤"
+  },
+  "mth.TrackFeatures": {
+    "English": "Track Features",
+    "ChineseSimplified": "轨道功能",
+    "ChineseTraditional": "軌道功能"
+  },
+  "mth.replaceSameTag": {
+    "English": "Replace Previous (Same Tag)",
+    "ChineseSimplified": "重建前清除同标签旧结果",
+    "ChineseTraditional": "重建前清除同標籤舊結果"
+  },
+  "mth.useSeed": {
+    "English": "Use Random Seed",
+    "ChineseSimplified": "使用随机种子",
+    "ChineseTraditional": "使用隨機種子"
+  },
+  "mth.seed": {
+    "English": "Random Seed",
+    "ChineseSimplified": "随机种子",
+    "ChineseTraditional": "隨機種子"
+  },
+  "mth.usePlanet": {
+    "English": "Enable Planet",
+    "ChineseSimplified": "是否使用星球",
+    "ChineseTraditional": "是否使用星球"
+  },
+  "mth.planetBlueColor": {
+    "English": "Blue Planet Color",
+    "ChineseSimplified": "蓝星球颜色",
+    "ChineseTraditional": "藍星球顏色"
+  },
+  "mth.planetBlueTag": {
+    "English": "Blue Planet Tag",
+    "ChineseSimplified": "蓝星球标签",
+    "ChineseTraditional": "藍星球標籤"
+  },
+  "mth.planetRedColor": {
+    "English": "Red Planet Color",
+    "ChineseSimplified": "红星球颜色",
+    "ChineseTraditional": "紅星球顏色"
+  },
+  "mth.planetRedTag": {
+    "English": "Red Planet Tag",
+    "ChineseSimplified": "红星球标签",
+    "ChineseTraditional": "紅星球標籤"
+  },
+  "mth.planetAnimationDistribution": {
+    "English": "Planet Animation Distribution Style",
+    "ChineseSimplified": "星球动画分布方式",
+    "ChineseTraditional": "星球動畫分佈方式"
+  },
+  "mth.changeParallax": {
+    "English": "Change Parallax",
+    "ChineseSimplified": "改变平行",
+    "ChineseTraditional": "改變平行"
+  },
+  "mth.parallaxChange": {
+    "English": "Parallax Change(from Left to Right)",
+    "ChineseSimplified": "平行变化(从左到右)",
+    "ChineseTraditional": "平行變化(從左到右)"
+  },
+  "mth.affectPlanet": {
+    "English": "Affect Planet",
+    "ChineseSimplified": "影响星球",
+    "ChineseTraditional": "影響星球"
+  },
+  "mth.eventDistribution": {
+    "English": "Event Distribution Style",
+    "ChineseSimplified": "事件分布方式",
+    "ChineseTraditional": "事件分佈方式"
+  },
+  "mth.create": {
+    "English": "Create",
+    "ChineseSimplified": "创建",
+    "ChineseTraditional": "創建"
+  },
+  "mth.inputTheTagFirst": {
+    "English": "Please input the tag first",
+    "ChineseSimplified": "请先输入标签",
+    "ChineseTraditional": "請先輸入標籤"
+  },
+  "mth.syncSpeedOnPaste": {
+    "English": "Sync Speed on Paste",
+    "ChineseSimplified": "粘贴时同步速度",
+    "ChineseTraditional": "粘貼時同步速度"
+  },
+  "mth.createFailed": {
+    "English": "Create failed:",
+    "ChineseSimplified": "创建失败：",
+    "ChineseTraditional": "創建失敗："
+  },
+  "mth.theLevelVersionIsTooOld": {
+    "English": "the Level Version is too Old",
+    "ChineseSimplified": "关卡版本太低",
+    "ChineseTraditional": "關卡版本太低"
+  },
+  "mth.tagCannotContainWhitespace": {
+    "English": "The tag cannot contain whitespace characters, please remove them from the tag",
+    "ChineseSimplified": "标签不能包含空白字符，请自行移除标签中的空白字符",
+    "ChineseTraditional": "標籤不能包含空白字元，請自行移除標籤中的空白字元"
+  },
+  "enum.MultiTrackHelper.TrackFeatures.CreateTrack": {
+    "English": "Create Track",
+    "ChineseSimplified": "生成轨道",
+    "ChineseTraditional": "生成軌道"
+  },
+  "enum.MultiTrackHelper.TrackFeatures.CreateAnimation": {
+    "English": "Create Animation",
+    "ChineseSimplified": "生成动画",
+    "ChineseTraditional": "生成動畫"
+  },
+  "enum.MultiTrackHelper.TrackAnimation.DisappearAnimation": {
+    "English": "Disappear Animation",
+    "ChineseSimplified": "消失动画",
+    "ChineseTraditional": "消失動畫"
+  },
+  "enum.MultiTrackHelper.TrackAnimation.AppearAnimation": {
+    "English": "Appear Animation",
+    "ChineseSimplified": "出现动画",
+    "ChineseTraditional": "出現動畫"
+  },
+  "enum.MultiTrackHelper.TrackDistribution.Distributed": {
+    "English": "Distributed",
+    "ChineseSimplified": "分布式的",
+    "ChineseTraditional": "分佈式的"
+  },
+  "enum.MultiTrackHelper.TrackDistribution.Centralized": {
+    "English": "Centralized",
+    "ChineseSimplified": "集中式的",
+    "ChineseTraditional": "集中式的"
+  },
+  "enum.MultiTrackHelper.TrackGenerationMode.Position": {
+    "English": "Position",
+    "ChineseSimplified": "位置",
+    "ChineseTraditional": "位置"
+  },
+  "enum.MultiTrackHelper.TrackGenerationMode.PivotOffset": {
+    "English": "Pivot Offset",
+    "ChineseSimplified": "轴心偏移",
+    "ChineseTraditional": "軸心偏移"
+  },
+  "enum.MultiTrackHelper.AffectAt.SpecificRange": {
+    "English": "Specific Range",
+    "ChineseSimplified": "特定范围",
+    "ChineseTraditional": "特定範圍"
+  },
+  "enum.MultiTrackHelper.AffectAt.SelectedTiles": {
+    "English": "Selected Tiles",
+    "ChineseSimplified": "被选中的砖块",
+    "ChineseTraditional": "被選中的磚塊"
+  },
+  "enum.MultiTrackHelper.TrackFeatures.InsertBpmMultiplier": {
+    "English": "Insert BPM Multiplier",
+    "ChineseSimplified": "插入bpm倍频",
+    "ChineseTraditional": "插入bpm倍頻"
+  },
+  "enum.MultiTrackHelper.TrackFeatures.TrackSizeChange": {
+    "English": "Track Size Change",
+    "ChineseSimplified": "轨道尺寸变化",
+    "ChineseTraditional": "軌道尺寸變化"
+  },
+  "enum.MultiTrackHelper.OpacitySyncType.TrackOpacity": {
+    "English": "Track Color Opacity",
+    "ChineseSimplified": "轨道主色调的透明度",
+    "ChineseTraditional": "軌道主色調的透明度"
+  },
+  "enum.MultiTrackHelper.OpacitySyncType.Decoration": {
+    "English": "Decoration Opacity",
+    "ChineseSimplified": "对象装饰本身的透明度",
+    "ChineseTraditional": "對象裝飾本身的透明度"
+  },
+  "mth.nothingToChange": {
+    "English": "Enable at least one range first",
+    "ChineseSimplified": "请先启用至少一条范围",
+    "ChineseTraditional": "請先啟用至少一條範圍"
+  },
+  "mth.targetAngle": {
+    "English": "Target Total Angle",
+    "ChineseSimplified": "目标总角度",
+    "ChineseTraditional": "目標總角度"
+  },
+  "mth.realtimeCapture": {
+    "English": "Realtime Capture",
+    "ChineseSimplified": "实时捕获",
+    "ChineseTraditional": "實時捕獲"
+  },
+  "mth.bpMultiplier": {
+    "English": "Multiplier ",
+    "ChineseSimplified": "倍频器",
+    "ChineseTraditional": "倍頻器"
+  },
+  "mth.bpPosition": {
+    "English": "Position",
+    "ChineseSimplified": "位置",
+    "ChineseTraditional": "位置"
+  },
+  "mth.bpValue": {
+    "English": "Value",
+    "ChineseSimplified": "数值",
+    "ChineseTraditional": "數值"
+  },
+  "mth.degrees": {
+    "English": "deg",
+    "ChineseSimplified": "度",
+    "ChineseTraditional": "度"
+  },
+  "mth.tiles": {
+    "English": "tile",
+    "ChineseSimplified": "砖块",
+    "ChineseTraditional": "磚塊"
+  },
+  "mth.bpm": {
+    "English": "bpm",
+    "ChineseSimplified": "bpm",
+    "ChineseTraditional": "bpm"
+  },
+  "mth.times": {
+    "English": "x",
+    "ChineseSimplified": "倍",
+    "ChineseTraditional": "倍"
+  },
+  "mth.addMultiplier": {
+    "English": "Add Multiplier",
+    "ChineseSimplified": "添加倍频器",
+    "ChineseTraditional": "添加倍頻器"
+  },
+  "mth.deleteMultiplier": {
+    "English": "Delete Multiplier",
+    "ChineseSimplified": "删除倍频器",
+    "ChineseTraditional": "刪除倍頻器"
+  },
+  "mth.nothingToDelete": {
+    "English": "No multiplier added in the panel to delete",
+    "ChineseSimplified": "没有可删除的倍频器（只能删除面板中新添加的）",
+    "ChineseTraditional": "沒有可刪除的倍頻器（只能刪除面板中新添加的）"
+  },
+  "mth.lock": {
+    "English": "Lock (keep this value)",
+    "ChineseSimplified": "锁定（固定此数值）",
+    "ChineseTraditional": "鎖定（固定此數值）"
+  },
+  "mth.calculate": {
+    "English": "Calculate",
+    "ChineseSimplified": "计算",
+    "ChineseTraditional": "計算"
+  },
+  "mth.needTarget": {
+    "English": "Please set the target total angle first",
+    "ChineseSimplified": "请先填写目标总角度",
+    "ChineseTraditional": "請先填寫目標總角度"
+  },
+  "mth.nothingToCompute": {
+    "English": "Nothing to compute (keep at least one multiplier unlocked)",
+    "ChineseSimplified": "没有可计算的倍频器（请至少保留一个未锁定）",
+    "ChineseTraditional": "沒有可計算的倍頻器（請至少保留一個未鎖定）"
+  },
+  "mth.tooManyMultipliers": {
+    "English": "Selected track exceeds the limit",
+    "ChineseSimplified": "选中轨道超过限制",
+    "ChineseTraditional": "選中軌道超過限制"
+  },
+  "mth.tooManyRows": {
+    "English": "Multiplier rows reached the limit (25)",
+    "ChineseSimplified": "倍频器数量已达上限（25）",
+    "ChineseTraditional": "倍頻器數量已達上限（25）"
+  },
+  "mth.needSelectTrack": {
+    "English": "Please select a track first",
+    "ChineseSimplified": "请先选中一段轨道",
+    "ChineseTraditional": "請先選中一段軌道"
+  },
+  "mth.noMultiplierToCreate": {
+    "English": "No multiplier to create",
+    "ChineseSimplified": "没有可创建的倍频器（数值需大于 0）",
+    "ChineseTraditional": "沒有可創建的倍頻器（數值需大於 0）"
+  }
+}

@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition="'$(Configuration)' == ''">Debug</Configuration>
+    <Platform Condition="'$(Platform)' == ''">AnyCPU</Platform>
+    <ProjectGuid>{7C1E4B34-9A52-4E0B-8F3D-2A6D5C8E1F90}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <AppDesignerFolder>Properties</AppDesignerFolder>
+    <RootNamespace>MultiTrackHelper</RootNamespace>
+    <AssemblyName>MultiTrackHelper</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <!-- 游戏 UMM/Harmony DLL 以 net48 编译，需要 4.8 目标框架。
+         本机未装 4.8 targeting pack 时，直接用系统运行库程序集编译（API 一致）。
+         已装 targeting pack 的机器可用 /p:FrameworkPathOverride=... 覆盖。 -->
+    <FrameworkPathOverride Condition="'$(FrameworkPathOverride)' == ''">C:\Windows\Microsoft.NET\Framework64\v4.0.30319</FrameworkPathOverride>
+    <FileAlignment>512</FileAlignment>
+    <Deterministic>true</Deterministic>
+    <LangVersion>8.0</LangVersion>
+    <!-- 游戏安装目录。命令行可用 /p:GameDir="..." 覆盖 -->
+    <GameDir Condition="'$(GameDir)' == ''">D:\steam\steamapps\common\A Dance of Fire and Ice</GameDir>
+    <ManagedDir>$(GameDir)\A Dance of Fire and Ice_Data\Managed</ManagedDir>
+    <!-- 编译后自动复制到游戏 Mods 目录；设 /p:DeployToGame=false 关闭 -->
+    <DeployToGame Condition="'$(DeployToGame)' == ''">true</DeployToGame>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|AnyCPU'">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|AnyCPU'">
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="0Harmony">
+      <HintPath>$(ManagedDir)\UnityModManager\0Harmony.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(ManagedDir)\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp-firstpass">
+      <HintPath>$(ManagedDir)\Assembly-CSharp-firstpass.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="DOTween">
+      <HintPath>$(ManagedDir)\DOTween.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(ManagedDir)\Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="RDTools">
+      <HintPath>$(ManagedDir)\RDTools.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>$(ManagedDir)\Unity.TextMeshPro.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(ManagedDir)\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(ManagedDir)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.ImageConversionModule">
+      <HintPath>$(ManagedDir)\UnityEngine.ImageConversionModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.Physics2DModule">
+      <HintPath>$(ManagedDir)\UnityEngine.Physics2DModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>$(ManagedDir)\UnityEngine.UI.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UIModule">
+      <HintPath>$(ManagedDir)\UnityEngine.UIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityModManager">
+      <HintPath>$(ManagedDir)\UnityModManager\UnityModManager.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="System.Memory">
+      <HintPath>$(ManagedDir)\System.Memory.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="netstandard">
+      <HintPath>$(ManagedDir)\netstandard.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="EnumCollection\AffectAt.cs" />
+    <Compile Include="EnumCollection\TrackAnimation.cs" />
+    <Compile Include="EnumCollection\TrackDistribution.cs" />
+    <Compile Include="EnumCollection\TrackGenerationMode.cs" />
+    <Compile Include="EnumCollection\TrackFeatures.cs" />
+    <Compile Include="EnumCollection\OpacitySyncType.cs" />
+    <Compile Include="Features\AnimationPlanner.cs" />
+    <Compile Include="Features\PlanetMotion.cs" />
+    <Compile Include="Features\MultiTrackFeature.cs" />
+    <Compile Include="Features\TrackIconMapping.cs" />
+    <Compile Include="Features\RandomSource.cs" />
+    <Compile Include="Features\TagCleanup.cs" />
+    <Compile Include="LevelData\FloorTimeline.cs" />
+    <Compile Include="LevelData\LevelAnalysis.cs" />
+    <Compile Include="Localization.cs" />
+    <Compile Include="Main.cs" />
+    <Compile Include="CustomTab.cs" />
+    <Compile Include="Patches\EditorIntegrationPatches.cs" />
+    <Compile Include="Features\InsertBpmMultiplierFeature.cs" />
+    <Compile Include="Features\TrackSizeChangeFeature.cs" />
+    <Compile Include="Patches\DecorationAnchorSyncPatch.cs" />
+    <Compile Include="Patches\DecorationPickingPatch.cs" />
+    <Compile Include="Patches\InsertBpmMultiplierPatches.cs" />
+    <Compile Include="Patches\PaclUndoGuardPatches.cs" />
+    <Compile Include="Patches\PasteSyncPatches.cs" />
+    <Compile Include="Patches\PopupPatches.cs" />
+    <Compile Include="Patches\PropertyPanelPatches.cs" />
+    <Compile Include="Patches\StableOrderPatch.cs" />
+    <Compile Include="PrefabProperties.cs" />
+    <Compile Include="PropertyCollection\Property.cs" />
+    <Compile Include="PropertyCollection\Property_Bool.cs" />
+    <Compile Include="PropertyCollection\Property_Button.cs" />
+    <Compile Include="PropertyCollection\Property_Color.cs" />
+    <Compile Include="PropertyCollection\Property_Ease.cs" />
+    <Compile Include="PropertyCollection\Property_Enum.cs" />
+    <Compile Include="PropertyCollection\Property_FloatPair.cs" />
+    <Compile Include="PropertyCollection\Property_InputField.cs" />
+    <Compile Include="PropertyCollection\Property_Note.cs" />
+    <Compile Include="PropertyCollection\Property_Tile.cs" />
+    <Compile Include="Startup.cs" />
+    <Compile Include="Utils\Popup.cs" />
+    <Compile Include="Utils\LevelEventEX.cs" />
+    <Compile Include="Utils\UndoScope.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Info.json" />
+    <None Include="Localizations.json" />
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <Target Name="DeployToMods" AfterTargets="Build" Condition="'$(DeployToGame)' == 'true'">
+    <ItemGroup>
+      <ModFiles Include="$(OutputPath)MultiTrackHelper.dll" />
+      <ModFiles Include="$(ProjectDir)Info.json" />
+      <ModFiles Include="$(ProjectDir)Localizations.json" />
+      <ModFiles Include="$(ProjectDir)MultiTrackIcon.png" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ModFiles)" DestinationFolder="$(GameDir)\Mods\MultiTrackHelper\" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="已部署 MultiTrackHelper 到 $(GameDir)\Mods\MultiTrackHelper\" />
+  </Target>
+</Project>

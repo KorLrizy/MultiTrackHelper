@@ -1,0 +1,9 @@
+{
+  "Id": "MultiTrackHelper",
+  "DisplayName": "Multi Track Helper",
+  "Author": "k (MultiTracks logic from Sprout34’s MappingHelper)",
+  "Version": "2.0.0-alpha",
+  "ManagerVersion": "0.22.14.0",
+  "AssemblyName": "MultiTrackHelper.dll",
+  "EntryMethod": "MultiTrackHelper.Startup.Load"
+}
