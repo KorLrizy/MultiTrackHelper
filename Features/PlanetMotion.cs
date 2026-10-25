@@ -39,6 +39,9 @@ namespace MultiTrackHelper.Features
         public Vector2 position;
         public bool hasRotation;
         public float rotation;
+        public bool linearEase;
+        public bool outSineEase;
+        public bool inBackEase;
         /// <summary>仅视差事件：目标大小与视差（100 - 视差 / 视差值）。</summary>
         public float scale;
         public float parallax;
@@ -46,10 +49,8 @@ namespace MultiTrackHelper.Features
 
     /// <summary>
     /// 一块砖的星球运动规格：到达/离开时刻、两颗星球的落点与旋转端点，以及
-    /// sweep/hold/pause 三段秒数。注意：这三个秒数只是按拍数切分出的**诊断元数据**，
-    /// 不是实际输出的运动分段——本轮仍然是一砖一条补间事件（旋转数值沿用旧实现，
-    /// 含暂停奇偶判断），游戏里的 tween 并没有按 sweep/hold/pause 拆开。
-    /// 它们留给后续真机核实后的精确暂停修复使用，不能拿来声称视觉上已分段。
+    /// sweep/hold/pause 的诊断秒数。它们按本砖 BPM 换算，不是实际输出的运动分段。
+    /// 仍然一砖一条补间；暂停与首砖倒计时通过起点相位表达，不改变轨道几何角。
     /// </summary>
     internal sealed class PlanetFloorMotion
     {
@@ -60,6 +61,7 @@ namespace MultiTrackHelper.Features
         public double sweepSeconds;
         public double holdSeconds;
         public double pauseSeconds;
+        public double countdownSeconds;
         public bool midSpin;
         public bool leaderIsRed;
         public float startRotation;
@@ -79,6 +81,7 @@ namespace MultiTrackHelper.Features
     {
         public readonly List<PlanetFloorMotion> floors = new List<PlanetFloorMotion>();
         public readonly List<PlanetMotionDraft> drafts = new List<PlanetMotionDraft>();
+        public readonly HashSet<string> approximations = new HashSet<string>(StringComparer.Ordinal);
 
         /// <summary>本批是否有真正的星球运动事件（只有视差调整不算）。</summary>
         public bool hasMoveEvents
@@ -105,6 +108,8 @@ namespace MultiTrackHelper.Features
         public float parallaxTo;
         public string bluePlanetTag;
         public string redPlanetTag;
+        public float firstFloorCountdownBeats;
+        public MotionOutputMode outputMode = MotionOutputMode.FrameByFrame;
 
         public bool distributed => distribution == TrackDistribution.Distributed;
 
@@ -119,7 +124,31 @@ namespace MultiTrackHelper.Features
             settings.parallaxTo = parallaxChange.Item2;
             settings.bluePlanetTag = bluePlanetTag;
             settings.redPlanetTag = redPlanetTag;
+            scrConductor conductor = scrConductor.instance;
+            float countdown = conductor != null ? conductor.adjustedCountdownTicks - 1f : 0f;
+            settings.firstFloorCountdownBeats = PlanetRotationPlanner.NonNegative(countdown);
             return settings;
+        }
+    }
+
+    /// <summary>双星球的装饰旋转相位；纯数学，不读编辑器，也不推算事件时间。</summary>
+    internal static class PlanetRotationPlanner
+    {
+        internal static float NonNegative(float value)
+        {
+            return float.IsNaN(value) || float.IsInfinity(value) || value < 0f ? 0f : value;
+        }
+
+        internal static void Resolve(float baseRotation, float geometricSweep, int holdTurns,
+            bool isCCW, float phaseDelayBeats, out float start, out float end)
+        {
+            // 游戏使用顺时针弧度，Unity 的 rotationOffset 使用逆时针度，符号相反。
+            // scrPlanet.HandlePause 重锚 theta_entry - extraBeats*pi；随后每帧
+            // Update_RefreshAngles 仍用完整 pi/拍。出口保持几何方向，时长由真实 entryTime 决定。
+            float visualDirection = isCCW ? 1f : -1f;
+            float origin = float.IsNaN(baseRotation) || float.IsInfinity(baseRotation) ? 0f : baseRotation;
+            start = origin - NonNegative(phaseDelayBeats) * 180f * visualDirection;
+            end = origin + (NonNegative(geometricSweep) + Math.Max(0, holdTurns) * 360f) * visualDirection;
         }
     }
 
@@ -144,16 +173,20 @@ namespace MultiTrackHelper.Features
             if (from < 0 || to < from || to >= trackDatas.Length || to >= listFloors.Count)
                 return plan;
 
+            if (trackDatas[from] == null || listFloors[from] == null)
+                return plan;
             bool distributed = settings.distributed;
             float startBpm = trackDatas[from].bpm;
+            if (!IsFinite(startBpm) || startBpm <= 0f)
+                return plan;
             // 时间轴一律用游戏的双精度时刻（含倒计时偏移，但本批全部取差值，抵消常数项），
             // 不再用 TrackData 的 float arrivalTime/departureTime 相减
             double baseGameEntry = trackDatas[from].gameEntryTime;
             int trackCount = to - from + 1;
 
-            // 旧实现用 moveRedPlanet 逐砖交替"领先星球"，第 1 块砖蓝领先。
-            // 交替与是否 midSpin 无关：midSpin 砖只产出视差事件、不产出运动事件，但角色仍要翻转。
-            bool moveRedPlanet = false;
+            // chosen(0) 是红，运动者是它的 next（蓝）；选区不能重新从蓝开始。
+            // 双星球 prev == next，因此 midspin 同样换到另一颗，逐砖翻转。
+            bool moveRedPlanet = (from & 1) != 0;
 
             for (int floor = from, i = 1; floor <= to; floor++, i++)
             {
@@ -166,6 +199,13 @@ namespace MultiTrackHelper.Features
                 }
 
                 int nextFloor = floor + 1 >= trackDatas.Length ? floor : floor + 1;
+                if (trackDatas[nextFloor] == null)
+                {
+                    moveRedPlanet = !moveRedPlanet;
+                    plan.approximations.Add("缺失后继砖快照，已跳过运动");
+                    continue;
+                }
+                RecordApproximations(plan, tile, data);
                 Vector2 curFloorPos = data.position - trackDatas[from].position;
                 Vector2 nextFloorPos = trackDatas[nextFloor].position - trackDatas[from].position;
                 bool distributedEvent = distributed;
@@ -187,7 +227,8 @@ namespace MultiTrackHelper.Features
                 double eventSeconds = ResolveDurationSeconds(listFloors, levelBpm, eventFloor, durationBeats);
 
                 PlanetFloorMotion motion = BuildFloorMotion(data, trackDatas[nextFloor], floor, nextFloor,
-                    baseGameEntry, moveRedPlanet, pivotTrackOffset, curFloorPos, nextFloorPos, tile);
+                    baseGameEntry, moveRedPlanet, pivotTrackOffset, curFloorPos, nextFloorPos, tile,
+                    settings.firstFloorCountdownBeats, floor + 1 < listFloors.Count);
                 plan.floors.Add(motion);
 
                 // 视差调整事件：与旧实现一样先于四类运动事件输出，标签是"红 蓝"两个
@@ -219,12 +260,33 @@ namespace MultiTrackHelper.Features
 
                     // 输出顺序与旧实现一致：跟随星球吸附 → 领先星球吸附 → 领先星球补间 →（有 hold 时）跟随星球补间
                     plan.drafts.Add(MakeSnap(hasAngleOffset, angleOffset, eventFloor, followerTag, followerRole,
-                        true, motion.followerPosition, false, 0f, eventStart));
+                        true, motion.followerPosition, true, 0f, eventStart));
+                    float correction = floor > 0 && data.numPlanets == 2 && motion.hasPause
+                        ? ResolvePauseCorrection(tile, listFloors[nextFloor]) : 0f;
                     plan.drafts.Add(MakeSnap(hasAngleOffset, angleOffset, eventFloor, leaderTag, leaderRole,
-                        true, motion.leaderPosition, true, motion.startRotation, eventStart));
-                    plan.drafts.Add(MakeTween(hasAngleOffset, angleOffset, eventFloor, leaderTag, leaderRole,
-                        durationBeats, eventStart, eventSeconds, true, motion.endRotation,
-                        motion.hasHold, motion.leaderHoldPosition));
+                        true, motion.leaderPosition, true, motion.startRotation + correction, eventStart));
+                    if (correction != 0f && eventSeconds > 0 && IsFinite(data.bpm) && data.bpm > 0)
+                    {
+                        if (motion.hasHold)
+                            plan.drafts.Add(MakeTween(hasAngleOffset, angleOffset, eventFloor, leaderTag, leaderRole,
+                                durationBeats, eventStart, eventSeconds, false, 0f, true, motion.leaderHoldPosition));
+                        if (settings.outputMode == MotionOutputMode.Simple)
+                        {
+                            // Simple mode deliberately approximates the whole pause-floor dwell with one ease.
+                            PlanetMotionDraft approximate = MakeTween(true, angleOffset, eventFloor, leaderTag, leaderRole,
+                                durationBeats, eventStart, eventSeconds, true, motion.endRotation, false, default(Vector2));
+                            approximate.inBackEase = tile.angleCorrectionType < 0f;
+                            approximate.outSineEase = !approximate.inBackEase;
+                            plan.drafts.Add(approximate);
+                            plan.approximations.Add("简单模式暂停角度校准使用前进OutSine/后退InBack近似");
+                        }
+                        else AppendPauseRotation(plan, motion, eventFloor, angleOffset, leaderTag, leaderRole,
+                            durationBeats, eventStart, eventSeconds, correction, 60.0 / data.bpm);
+                    }
+                    else
+                        plan.drafts.Add(MakeTween(hasAngleOffset, angleOffset, eventFloor, leaderTag, leaderRole,
+                            durationBeats, eventStart, eventSeconds, true, motion.endRotation,
+                            motion.hasHold, motion.leaderHoldPosition));
                     if (motion.hasHold)
                     {
                         plan.drafts.Add(MakeTween(hasAngleOffset, angleOffset, eventFloor, followerTag, followerRole,
@@ -255,12 +317,13 @@ namespace MultiTrackHelper.Features
                     continue;
                 if (draft.isParallaxAdjust)
                 {
-                    LevelEvent adjust = new LevelEvent(draft.eventFloor, LevelEventType.MoveDecorations);
+                    LevelEvent adjust = NewMotionEvent(draft.eventFloor);
                     if (draft.hasAngleOffset)
                         adjust["angleOffset"] = draft.angleOffset;
                     adjust.disabled["positionOffset"] = true;
                     adjust.disabled["scale"] = false;
                     adjust.disabled["parallax"] = false;
+                    SetGeneratedNote(adjust, "移动星球");
                     adjust["duration"] = draft.duration;
                     adjust["tag"] = draft.tag;
                     adjust["scale"] = new Vector2(draft.scale, draft.scale);
@@ -272,19 +335,43 @@ namespace MultiTrackHelper.Features
                 if (skipMoveTags != null && skipMoveTags.Contains(draft.tag))
                     continue;
 
-                LevelEvent levelEvent = new LevelEvent(draft.eventFloor, LevelEventType.MoveDecorations);
+                LevelEvent levelEvent = NewMotionEvent(draft.eventFloor);
                 if (draft.hasAngleOffset)
                     levelEvent["angleOffset"] = draft.angleOffset;
-                levelEvent.disabled["positionOffset"] = false;
-                levelEvent.disabled["rotationOffset"] = false;
+                levelEvent.disabled["positionOffset"] = !draft.hasPosition;
+                levelEvent.disabled["rotationOffset"] = !draft.hasRotation;
+                SetGeneratedNote(levelEvent, "移动星球");
                 levelEvent["tag"] = draft.tag;
                 levelEvent["duration"] = draft.duration;
+                if (draft.linearEase) levelEvent["ease"] = DG.Tweening.Ease.Linear;
+                if (draft.outSineEase) levelEvent["ease"] = DG.Tweening.Ease.OutSine;
+                if (draft.inBackEase) levelEvent["ease"] = DG.Tweening.Ease.InBack;
                 if (draft.hasPosition)
                     levelEvent["positionOffset"] = draft.position;
                 if (draft.hasRotation)
                     levelEvent["rotationOffset"] = draft.rotation;
                 editor.events.Add(levelEvent);
             }
+        }
+
+        internal static void SetGeneratedNote(LevelEvent levelEvent, string note)
+        {
+            // AEE 为事件注册 aeeNote；未安装/未注册时不写未知键，避免原生面板与保存错误。
+            // 只对本次新建事件调用，不改用户的源事件备注或触发标签。
+            if (levelEvent?.info?.propertiesInfo != null && levelEvent.info.propertiesInfo.ContainsKey("aeeNote"))
+                levelEvent["aeeNote"] = note;
+        }
+
+        private static LevelEvent NewMotionEvent(int floor)
+        {
+            LevelEvent levelEvent = new LevelEvent(floor, LevelEventType.MoveDecorations);
+            // 星球基础事件只修改本 draft 声明的属性，不能依赖游戏版本的可禁用属性默认值。
+            foreach (KeyValuePair<string, PropertyInfo> property in levelEvent.info.propertiesInfo)
+            {
+                if (property.Value.canBeDisabled)
+                    levelEvent.disabled[property.Key] = true;
+            }
+            return levelEvent;
         }
 
         /// <summary>
@@ -316,9 +403,8 @@ namespace MultiTrackHelper.Features
         /// <summary>一块砖的到达/离开姿态与三段（扫过 / hold / 暂停）时间边界。</summary>
         private static PlanetFloorMotion BuildFloorMotion(TrackData data, TrackData nextData, int floor, int nextFloor,
             double baseGameEntry, bool moveRedPlanet, float pivotTrackOffset, Vector2 curFloorPos, Vector2 nextFloorPos,
-            scrFloor tile)
+            scrFloor tile, float firstFloorCountdownBeats, bool hasNextFloor)
         {
-            float direction = tile.isCCW ? 1f : -1f;
             PlanetFloorMotion motion = new PlanetFloorMotion
             {
                 floor = floor,
@@ -329,20 +415,16 @@ namespace MultiTrackHelper.Features
                 leaderIsRed = moveRedPlanet,
                 hasHold = data.isHold,
                 holdBeats = data.isHold ? data.holdDuration * 2 : 0,
-                hasPause = data.isPause,
-                pauseBeats = data.isPause ? data.pauseDuration : 0f
+                hasPause = hasNextFloor && !tile.midSpin && !tile.freeroam && PlanetRotationPlanner.NonNegative(data.extraBeats) > 0f,
+                pauseBeats = hasNextFloor && !tile.midSpin && !tile.freeroam ? PlanetRotationPlanner.NonNegative(data.extraBeats) : 0f
             };
 
-            // 旋转端点沿用旧实现：起点 tail-180，终点加扫角 + hold 整圈 + 暂停（旧奇偶判断，偶数拍才加）
-            float startRotation = data.tail - 180f;
-            // 装饰旋转用几何扫角（head/tail 夹角）；data.angle 是每拍角，只用于把时间换成拍数
-            float endRotation = startRotation + direction * data.geometricAngle;
-            if (data.isPause && data.pauseDuration % 2 == 0)
-                endRotation = endRotation + direction * data.pauseDuration * 180f;
-            if (data.isHold)
-                endRotation = endRotation + direction * data.holdDuration * 360f;
-            motion.startRotation = startRotation;
-            motion.endRotation = endRotation;
+            // 首砖 angleLength 可能混入播放历史；倒计时从 settings 快照独立取得。
+            // 几何角仍供假轨道使用，不注入倒计时。暂停只后移本砖起点相位，出口不漂移。
+            float phaseDelay = floor == 0 ? PlanetRotationPlanner.NonNegative(firstFloorCountdownBeats) : motion.pauseBeats;
+            PlanetRotationPlanner.Resolve(data.tail - 180f, data.geometricAngle,
+                data.isHold ? data.holdDuration : 0, tile.isCCW, phaseDelay,
+                out motion.startRotation, out motion.endRotation);
 
             // 落点：领先星球与跟随星球在本砖的吸附位置（红领先时两者相对砖心各偏 1 格，蓝领先时都在砖心）
             if (moveRedPlanet)
@@ -370,23 +452,80 @@ namespace MultiTrackHelper.Features
                 motion.followerHoldPosition = PivotOffset(holdBase, pivotTrackOffset);
             }
 
-            // 三段秒数（仅诊断元数据，不是实际运动分段）：同一砖里扫角 / hold / 暂停共用同一个
-            // "拍→秒"比例，用到达→离开的真实总时长按拍数切分；本轮旋转与输出仍是整砖一条补间。
-            if (!tile.midSpin)
+            // 仅诊断：按本砖真实有效 BPM 换算，不把含 extraBeats/倒计时的总秒数重新比例摊回旧公式。
+            if (!tile.midSpin && IsFinite(data.bpm) && data.bpm > 0f)
             {
-                double totalBeats = data.angle / 180.0 + (data.isPause ? data.pauseDuration : 0.0)
-                                    + (data.isHold ? data.holdDuration * 2.0 : 0.0);
-                double totalSeconds = motion.departureTime - motion.arrivalTime;
-                if (totalBeats > 0.0 && totalSeconds > 0.0 && IsFinite((float)totalBeats) && IsFinite((float)totalSeconds))
-                {
-                    double secondsPerBeat = totalSeconds / totalBeats;
-                    motion.sweepSeconds = data.angle / 180.0 * secondsPerBeat;
-                    motion.holdSeconds = (data.isHold ? data.holdDuration * 2.0 : 0.0) * secondsPerBeat;
-                    motion.pauseSeconds = (data.isPause ? data.pauseDuration : 0.0) * secondsPerBeat;
-                }
+                double secondsPerBeat = 60.0 / data.bpm;
+                motion.sweepSeconds = PlanetRotationPlanner.NonNegative(data.angle) / 180.0 * secondsPerBeat;
+                motion.holdSeconds = (data.isHold ? Math.Max(0, data.holdDuration) * 2.0 : 0.0) * secondsPerBeat;
+                motion.pauseSeconds = motion.pauseBeats * secondsPerBeat;
+                motion.countdownSeconds = floor == 0 ? phaseDelay * secondsPerBeat : 0.0;
             }
 
             return motion;
+        }
+
+        // Ideal, on-time two-planet path. Use the game's raw modulo difference, NOT a shortest arc.
+        internal static float ResolvePauseCorrection(scrFloor tile, scrFloor next)
+        {
+            if (tile == null || next == null || !IsFinite(tile.angleCorrectionType)) return 0f;
+            double direction = tile.isCCW ? -1.0 : 1.0;
+            double before = Mod(tile.entryangle);
+            double anchor = next.entryangle - Math.PI * direction
+                - Math.PI * (double)(tile.extraBeats + 1f) * direction
+                + (Math.PI - tile.angleLength) * direction;
+            double correction = tile.angleCorrectionType * Math.Abs(before - Mod(anchor)) * direction * 180.0 / Math.PI;
+            return double.IsNaN(correction) || double.IsInfinity(correction) ? 0f : (float)correction;
+        }
+
+        private static double Mod(double angle)
+        {
+            double circle = Math.PI * 2.0;
+            return (angle % circle + circle) % circle;
+        }
+
+        private static void AppendPauseRotation(PlanetMotionPlan plan, PlanetFloorMotion motion,
+            int eventFloor, float angleOffset, string tag, PlanetOrbitRole role, float beats,
+            double start, double seconds, float correction, double correctionSeconds)
+        {
+            // Linear interpolation error <= max|f''| h²/8. OutSine bias is added to linear orbit.
+            // Bound the angular error by 0.005 degrees; the next landing clears a truncated bias.
+            double active = Math.Min(seconds, correctionSeconds);
+            int required = Math.Max(1, (int)Math.Ceiling(active / correctionSeconds
+                * Math.Sqrt(Math.Abs(correction) * Math.PI * Math.PI / (8.0 * 0.005))));
+            int count = Math.Min(2048, required);
+            if (required > count) plan.approximations.Add("暂停校准采样达到安全上限");
+            for (int i = 1; i <= count; i++)
+            {
+                double left = active * (i - 1) / count, right = active * i / count;
+                Add(left, right, Rotation(right));
+            }
+            if (active < seconds) Add(active, seconds, motion.endRotation);
+
+            float Rotation(double time)
+            {
+                return (float)(motion.startRotation + (motion.endRotation - motion.startRotation) * time / seconds
+                    + correction * (1.0 - Math.Sin(Math.PI * 0.5 * Math.Min(1.0, time / correctionSeconds))));
+            }
+            void Add(double left, double right, float rotation)
+            {
+                PlanetMotionDraft draft = MakeTween(true, angleOffset + (float)(left * beats / seconds * 180.0),
+                    eventFloor, tag, role, (float)((right - left) * beats / seconds), start + left, right - left,
+                    true, rotation, false, default(Vector2));
+                draft.linearEase = true;
+                plan.drafts.Add(draft);
+            }
+        }
+
+        private static void RecordApproximations(PlanetMotionPlan plan, scrFloor tile, TrackData data)
+        {
+            if (data.numPlanets != 2) plan.approximations.Add("多星球仍使用蓝红双星球示意");
+            if (Math.Abs(data.radiusScale - 100f) > 0.001f) plan.approximations.Add("非默认半径的公转布局为近似");
+            if (tile.freeroam) plan.approximations.Add("自由漫游运行期轨迹不完全复刻");
+            if (tile.planetEase != DG.Tweening.Ease.Linear) plan.approximations.Add("星球非线性缓动为线性近似");
+            if (!tile.midSpin && !tile.freeroam && PlanetRotationPlanner.NonNegative(data.extraBeats) > 0f
+                && tile.angleCorrectionType != 0f && (data.numPlanets != 2 || tile.seqID == 0))
+                plan.approximations.Add("暂停的视觉角度修正补间未复刻");
         }
 
         private static PlanetMotionDraft MakeSnap(bool hasAngleOffset, float angleOffset, int eventFloor,

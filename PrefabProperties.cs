@@ -8,8 +8,13 @@ namespace MultiTrackHelper
     /// <summary>
     /// 面板控件清单。
     /// 这里的顺序就是面板显示顺序、也是 ToData() 导出顺序。
-    /// 属性名、持久化键（key）与条件字典的分组都不能改：
-    /// key 一变，用户已保存的面板设置就失效；顺序一变，离线对拍（182 项 / 35167 字节）就对不上。
+    ///
+    /// 两个名字要分清：
+    /// · name（各工厂方法的第一个参数）是属性名，同时是控件对象名、LevelEvent 里的数据键、
+    ///   条件表（enableIf/disableIf）与显隐列表里的匹配键；它一变，已保存的事件数据与显隐列表就全对不上，所以不能改。
+    /// · key 是本地化键，只决定控件标题文本（null 表示用游戏默认的 editor.{事件名}.{属性名}），改它不动任何数据。
+    ///
+    /// 顺序一变，离线对拍（182 项 / 35167 字节）就对不上，因此也不要重排。
     /// </summary>
     public static class PrefabProperties
     {
@@ -85,6 +90,8 @@ namespace MultiTrackHelper
         /// <summary>位移、旋转、缩放、透明度与缓动；parallaxRange/scaleRange 等都是"起始→结束"两值。</summary>
         private static void AddMotionProperties()
         {
+            Add(Property.EnumOf<MotionOutputMode>("motionOutputMode", value_default: MotionOutputMode.Simple,
+                key: "mth.motionOutputMode"));
             Add(Property.Input("duration", InputKind.Float, value_default: 1, min: 0,
                 unit: "beats", key: "editor.duration"));
             Add(Property.FloatPair("xPosOffsetRange", value_default: new Vector2(0, 0),
@@ -111,7 +118,7 @@ namespace MultiTrackHelper
         /// <summary>分布式/集中式的选择，以及集中式下的轴心偏移（trackRotation）。</summary>
         private static void AddDistributionProperties()
         {
-            Add(Property.EnumOf<TrackDistribution>("TrackDistribution", value_default: TrackDistribution.Distributed,
+            Add(Property.EnumOf<TrackDistribution>("TrackDistribution", value_default: TrackDistribution.Centralized,
                 disableIf: When("syncSpeedOnPaste", "Enabled"), key: "mth.trackDistribution"));
             Add(Property.EnumOf<TrackGenerationMode>("trackGenerationMode", value_default: TrackGenerationMode.Position,
                 enableIf: When("TrackDistribution", "Centralized"), key: "mth.trackGenerationMode"));
@@ -124,11 +131,11 @@ namespace MultiTrackHelper
         /// <summary>同步类开关；opacitySyncType 只在开启透明度同步后可选。</summary>
         private static void AddSyncProperties()
         {
-            Add(Property.Bool("syncSize", key: "mth.syncSize"));
-            Add(Property.Bool("syncOpacity", key: "mth.syncOpacity"));
+            Add(Property.Bool("syncSize", value_default: true, key: "mth.syncSize"));
+            Add(Property.Bool("syncOpacity", value_default: true, key: "mth.syncOpacity"));
             Add(Property.EnumOf<OpacitySyncType>("opacitySyncType", value_default: OpacitySyncType.TrackOpacity,
                 enableIf: When("syncOpacity", "Enabled"), key: "mth.opacitySyncType"));
-            Add(Property.Bool("syncStyle", value_default: false, key: "mth.syncStyle"));
+            Add(Property.Bool("syncStyle", value_default: true, key: "mth.syncStyle"));
             Add(Property.Bool("syncMoveTrack", value_default: true,
                 // enableIf 条件按 OR 匹配，分布式残留轴心选项不应被禁用。
                 enableIf: When("TrackDistribution", "Distributed", "trackGenerationMode", "Position"),
@@ -166,7 +173,7 @@ namespace MultiTrackHelper
         /// <summary>星球生成与视差改动；未勾选"使用星球"/"改变视差"时相关项置灰。</summary>
         private static void AddPlanetProperties()
         {
-            Add(Property.Bool("usePlanet", key: "mth.usePlanet"));
+            Add(Property.Bool("usePlanet", value_default: true, key: "mth.usePlanet"));
             Add(Property.Color("planetBlueColor", value_default: new Color(0f, 0f, 1f, 1f),
                 key: "mth.planetBlueColor", enableIf: When("usePlanet", "Enabled")));
             Add(Property.Input("planetBlueTag", InputKind.String, value_default: "",
@@ -176,7 +183,7 @@ namespace MultiTrackHelper
             Add(Property.Input("planetRedTag", InputKind.String, value_default: "",
                 enableIf: When("usePlanet", "Enabled"), key: "mth.planetRedTag"));
             Add(Property.EnumOf<TrackDistribution>("planetAnimationDistribution",
-                value_default: TrackDistribution.Distributed,
+                value_default: TrackDistribution.Centralized,
                 enableIf: When("usePlanet", "Enabled"),
                 disableIf: When("syncSpeedOnPaste", "Enabled"),
                 key: "mth.planetAnimationDistribution"));
@@ -185,9 +192,9 @@ namespace MultiTrackHelper
                 isRange: false, enableIf: When("changeParallax", "Enabled"), key: "mth.parallaxChange"));
             Add(Property.Bool("affectPlanet", enableIf: When("changeParallax", "Enabled"),
                 key: "mth.affectPlanet"));
-            Add(Property.EnumOf<TrackDistribution>("eventDistribution", value_default: TrackDistribution.Distributed,
+            Add(Property.EnumOf<TrackDistribution>("eventDistribution", value_default: TrackDistribution.Centralized,
                 disableIf: When("syncSpeedOnPaste", "Enabled"), key: "mth.eventDistribution"));
-            Add(Property.Bool("syncSpeedOnPaste", key: "mth.syncSpeedOnPaste"));
+            Add(Property.Bool("syncSpeedOnPaste", value_default: true, key: "mth.syncSpeedOnPaste"));
         }
 
         /// <summary>
@@ -270,6 +277,11 @@ namespace MultiTrackHelper
                 key: "mth.calculate"));
         }
 
+        /// <summary>
+        /// 生成轨道时可见的属性组。列表里写的是**属性名**（同 name），不是本地化键；
+        /// 显隐靠 Main.ShowActiveChildren 按名找控件对象，所以这里的顺序就是面板上的行序。
+        /// 已定稿的顺序与成员不要为了排版去调（产品文档已固定）。
+        /// </summary>
         public static List<string> CreateTrackToActive { get; set; } = new List<string>()
             {
                 "affectTileRangeFrom",
@@ -281,6 +293,7 @@ namespace MultiTrackHelper
                 "syncSpeedOnPaste",
                 "TrackDistribution",
                 "trackGenerationMode",
+                "motionOutputMode",
                 "trackGenerationModeNote",
                 "trackRotation",
                 "syncSize",
@@ -323,6 +336,7 @@ namespace MultiTrackHelper
                 "rotationOffsetRange",
                 "scaleRange",
                 "parallaxRange",
+                "motionOutputMode",
                 "opacity",
                 "angleOffset",
                 "ease",
@@ -351,6 +365,7 @@ namespace MultiTrackHelper
                 "scaleRevertTo",
                 "parallaxRange",
                 "parallaxRevertTo",
+                "motionOutputMode",
                 "opacity",
                 "angleOffset",
                 "ease",

@@ -75,6 +75,8 @@ namespace MultiTrackHelper
                 MultiTrackEventType,
                 MultiTrackEventName,
                 CreateSprite(Path.Combine(modEntry.Path, "MultiTrackIcon.png")),
+                // saveSetting 只是内存缓存开关：按事件类型复用同一个 LevelEvent 实例（切面板再回来值还在），
+                // 不写磁盘、不进关卡存档；关闭模组时由 StopMod 清掉。
                 saveSetting: true,
                 properties: PrefabProperties.Properties.Select(property => property.ToData()).ToList());
 
@@ -172,10 +174,17 @@ namespace MultiTrackHelper
             // UnpatchAll 不会回收已经插进 UnityEvent 的委托，按引用自己摘干净
             Patches.TextEndEditPatch.ReleaseAll();
             Patches.PaclDecorationUndo.Reset();
+            // 本模组挂在游戏静态表/静态字段上的内存缓存全部清掉：面板事件缓存、粘贴元数据、PACL 守卫计数。
+            // 这三样都只活在内存里，禁用后再启用会重新建立；剪贴板元数据的清理仅在关模组时做，
+            // 不能放在 Awake（跨关卡粘贴需要在编辑器重载后仍认得那批剪贴板条目）。
+            Patches.InspectorPanelShowPanelPatch.saves.Clear();
+            Patches.PasteSyncPatches.ResetAll();
+            Patches.PaclUndoGuardPatches.Reset();
             // 清掉注入到 GCS 的静态数据（跨场景重载仍存在），否则禁用后事件类型/图标仍残留
             Patches.scnEditorAwakePatch.RemoveInjection();
             insertSpacers.Clear();
             MultiTrackLevelEvent = null;
+            InsertUiInjected = false;
         }
 
         // ── 面板显隐 ────────────────────────────────────────────────────────────

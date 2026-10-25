@@ -110,6 +110,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="EnumCollection\AffectAt.cs" />
+    <Compile Include="EnumCollection\MotionOutputMode.cs" />
     <Compile Include="EnumCollection\TrackAnimation.cs" />
     <Compile Include="EnumCollection\TrackDistribution.cs" />
     <Compile Include="EnumCollection\TrackGenerationMode.cs" />
@@ -122,6 +123,7 @@
     <Compile Include="Features\RandomSource.cs" />
     <Compile Include="Features\TagCleanup.cs" />
     <Compile Include="LevelData\FloorTimeline.cs" />
+    <Compile Include="LevelData\TrackGeometry.cs" />
     <Compile Include="LevelData\LevelAnalysis.cs" />
     <Compile Include="Localization.cs" />
     <Compile Include="Main.cs" />
@@ -150,8 +152,10 @@
     <Compile Include="PropertyCollection\Property_Tile.cs" />
     <Compile Include="Startup.cs" />
     <Compile Include="Utils\Popup.cs" />
+    <Compile Include="Utils\ClipboardBpmStore.cs" />
     <Compile Include="Utils\LevelEventEX.cs" />
     <Compile Include="Utils\UndoScope.cs" />
+    <Compile Include="Utils\EditorRefresh.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>

@@ -120,7 +120,7 @@ namespace MultiTrackHelper.Features
 
                 // 与原版 PasteTrackColor 一致：加完事件直接 ApplyEventsToFloors。
                 // 不能用 RemakePath(true, false)：remakeLevel=false 时它连 ApplyEventsToFloors 都不调，要播放一次才刷新
-                editor.ApplyEventsToFloors();
+                MultiTrackHelper.Utils.EditorRefresh.AfterWrite(editor);
                 editor.DeselectFloors();
                 editor.SelectFloor(listFloors[from]);
             }

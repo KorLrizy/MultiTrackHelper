@@ -93,10 +93,17 @@ namespace MultiTrackHelper.PropertyCollection
         /// <summary>输入框的取值类型（决定 data["type"] 与 min/max 的形态）。</summary>
         internal InputKind FieldKind { get; set; }
 
-        /// <summary>面板属性名，同时也是 LevelEvent 里的数据键。</summary>
+        /// <summary>
+        /// 面板属性名（= 控件对象名 = LevelEvent 里的数据键）。它同时决定面板上按名找子对象、
+        /// enableIf/disableIf 的匹配键与显隐列表里的字符串，所以不能和本地化键混用。
+        /// 显示文本一律通过 <see cref="Key"/> 或游戏默认的 editor.事件名.属性名 取。
+        /// </summary>
         public string Name { get { return name; } }
 
-        /// <summary>持久化/本地化键；null 表示用游戏默认的 editor.事件名.属性名。</summary>
+        /// <summary>
+        /// 本地化键（只用于取显示文本）：null 表示用游戏默认的 editor.{事件名}.{属性名}。
+        /// 它不参与数据读写，改它不会影响面板上控件名或已保存的事件数据。
+        /// </summary>
         public string Key { get { return key; } }
 
         /// <summary>

@@ -113,16 +113,26 @@ namespace MultiTrackHelper.Patches
     }
 
     /// <summary>
-    /// 防止按 Enter 时触发 createButton 的 OnSubmit 冒泡（会把焦点丢进生成流程）。
-    /// 只看按钮名字：只有本模组的生成按钮叫 createButton，其它按钮原样放行。
+    /// 防止按 Enter 时触发本模组按钮的 OnSubmit 冒泡（会把焦点丢进生成流程）。
+    ///
+    /// 判定靠控件所属的 ADOFAI.Property 及其 info：只有 info 属于本模组事件类型、且确实是 Export 控件
+    /// （PropertyControl_Export 里的按钮）才拦。不再按按钮物体名 Contains("createButton") 做全局匹配——
+    /// 那样会连带拦掉别的 mod、甚至游戏自己同名的按钮。
     /// </summary>
     [HarmonyPatch(typeof(UnityEngine.UI.Button), "OnSubmit")]
     internal static class ButtonSubmitGuardPatch
     {
         internal static bool Prefix(UnityEngine.UI.Button __instance)
         {
-            return __instance == null || string.IsNullOrEmpty(__instance.name)
-                || !__instance.name.Contains("createButton");
+            if (__instance == null)
+                return true;
+
+            ADOFAI.Property property = __instance.GetComponentInParent<ADOFAI.Property>();
+            if (property == null || property.info == null || !MultiTrackScope.IsOurs(property.info))
+                return true;
+
+            // 本模组面板里只有 Export 型控件带按钮（生成/尺寸变化/倍频/粘贴…）；其余原生按钮不拦
+            return property.info.type != PropertyType.Export;
         }
     }
 
@@ -185,9 +195,12 @@ namespace MultiTrackHelper.Patches
     }
 
     /// <summary>
-    /// 开关/颜色/评分/下拉/向量/浮点对这些控件的值变化回调：
+    /// 开关/颜色/下拉/向量/浮点对这些控件的值变化回调：
     /// 进入控件方法前记下旧值与当时的事件对象，方法返回后比对并回调 Main.MultiTrack.OnValueChanged；
     /// 回调返回 false 就把值写回旧值并刷新面板。
+    ///
+    /// 只挂本面板真的用到的控件（Bool / Color / Toggle / Vector2 / FloatPair）：
+    /// 没有控件的类型不挂，免得白白接管全局同名方法。
     ///
     /// 只有"确实读到了旧值"（TryGet 成功）才参与；且返回时若选中的事件已经换成另一个对象，
     /// 整段跳过——否则会把上一个事件的旧值写进新事件。
@@ -206,7 +219,6 @@ namespace MultiTrackHelper.Patches
         {
             yield return AccessTools.Method(typeof(PropertyControl_Bool), "SetValue");
             yield return AccessTools.Method(typeof(PropertyControl_Color), "OnEndEdit") ?? AccessTools.Method(typeof(PropertyControl_Color), "OnChange");
-            yield return AccessTools.Method(typeof(PropertyControl_Rating), "SetInt");
             yield return AccessTools.Method(typeof(PropertyControl_Toggle), "SelectVar");
             yield return AccessTools.Method(typeof(PropertyControl_Vector2), "SetVectorVals");
             yield return AccessTools.Method(typeof(PropertyControl_FloatPair), "Save");
@@ -311,7 +323,6 @@ namespace MultiTrackHelper.Patches
 
         internal static IEnumerable<MethodBase> TargetMethods()
         {
-            yield return AccessTools.Method(typeof(PropertyControl_LongText), "Setup");
             yield return AccessTools.Method(typeof(PropertyControl_Text), "Setup");
         }
 
@@ -446,10 +457,7 @@ namespace MultiTrackHelper.Patches
         private static TMP_InputField ResolveInputField(object control)
         {
             PropertyControl_Text text = control as PropertyControl_Text;
-            if (text != null)
-                return text.inputField;
-            PropertyControl_LongText longText = control as PropertyControl_LongText;
-            return longText != null ? longText.inputField : null;
+            return text != null ? text.inputField : null;
         }
 
         private static Instrumentation FindRecord(TMP_InputField inputField)

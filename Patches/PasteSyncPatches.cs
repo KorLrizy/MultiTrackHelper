@@ -11,9 +11,10 @@ namespace MultiTrackHelper.Patches
 {
     internal static class PasteSyncPatches
     {
-        // 剪贴板条目是装箱的 FloorData，用盒子引用识别替换/重排，不能只比条数
+        // 本批剪贴板条目的身份列表（复制时按序记下的盒子引用）。只用来认“最近这批是不是我们记的”，
+        // 以及逐块追加时保持顺序；**源 BPM 不在这里**，而是记在 ClipboardBpmStore 的弱表里（按盒子/事件列表身份），
+        // 否则复制 B 就会把 A 的 BPM 顶掉，撤销回到 A 的剪贴板后重做拿不到 BPM。
         private static readonly List<object> copiedEntries = new List<object>();
-        private static readonly List<float> copiedBpms = new List<float>();
         // PACL 粘贴到多选时会在 PasteFloors 内部借 CopyFloor 备份被覆盖的砖；那不是用户的复制，不能动记录
         private static int pasteDepth;
 
@@ -45,14 +46,42 @@ namespace MultiTrackHelper.Patches
             return !float.IsNaN(value) && !float.IsInfinity(value);
         }
 
-        // 凡是"剪贴板可能已经换了内容"的分支都先清掉逐砖源速度，绝不沿用陈旧 metadata
+        // 凡是“剪贴板可能已经换了内容”的分支都先清掉“本批身份”列表。
+        // 注意只清列表：源 BPM 在 ClipboardBpmStore 里按身份存，剪贴板换届不能把它清掉——
+        // 用户先复制 A、再复制 B，随后撤销/重做把剪贴板换回 A 时，还要靠它做粘贴缩放。
         private static void ResetCopyMetadata()
         {
             copiedEntries.Clear();
-            copiedBpms.Clear();
         }
 
-        // 当前剪贴板是不是记下过源速度的那一批盒子：内容类型、条数、逐条引用全部一致才算
+        /// <summary>
+        /// 关闭模组时连粘贴深度与弱表一起清零。
+        /// 刻意不并进 <see cref="ResetCopyMetadata"/>：后者在复制/粘贴半途也会被调用，
+        /// 随手改 pasteDepth 会把“粘贴中”的守卫提前解开，也不能把源 BPM 丢掉。
+        /// Awake 也不调这个：跨关卡粘贴要求编辑器重载后仍认得那批剪贴板条目。
+        /// </summary>
+        internal static void ResetAll()
+        {
+            ResetCopyMetadata();
+            ClipboardBpmStore.Clear();
+            pasteDepth = 0;
+        }
+
+        // 登记一条剪贴板内容的源 BPM：盒子身份 + 它的事件列表身份各记一次。
+        // 粘贴多砖拿到的是盒子，单砖粘贴/粘贴事件拿到的是拆箱副本里的列表引用，两种入口都得查得到。
+        private static void RecordSourceBpm(object box, float bpm)
+        {
+            if (box == null || !IsFinite(bpm) || bpm <= 0f)
+                return;
+
+            ClipboardBpmStore.StoreBox(box, bpm);
+            if (box is scnEditor.FloorData floorData)
+                ClipboardBpmStore.StoreEventList(floorData.levelEventData, bpm);
+        }
+
+        // 当前剪贴板是不是“最近这批记过的盒子”：内容类型、条数、逐条引用全部一致才算。
+        // 只用于复制侧的批次记账（追加复制时判断要不要重记），**不再**当作粘贴的前置条件：
+        // 粘贴改按单盒查弱表，所以剪贴板被换回旧批次时也能正常工作。
         private static bool CopiedClipboardMatches(scnEditor editor)
         {
             if (editor == null || editor.clipboard == null)
@@ -61,7 +90,7 @@ namespace MultiTrackHelper.Patches
                 return false;
 
             int count = editor.clipboard.Count;
-            if (count == 0 || count != copiedEntries.Count || count != copiedBpms.Count)
+            if (count == 0 || count != copiedEntries.Count)
                 return false;
 
             for (int i = 0; i < count; i++)
@@ -120,7 +149,7 @@ namespace MultiTrackHelper.Patches
                     for (int i = 0; i < count; i++)
                     {
                         copiedEntries.Add(__instance.clipboard[i]);
-                        copiedBpms.Add(SourceBpm(__instance, floors[i]));
+                        RecordSourceBpm(__instance.clipboard[i], SourceBpm(__instance, floors[i]));
                     }
                     Main.Logger.Log($"PasteSync: 多砖复制，按选区记录了 {count} 条源速度");
                 }
@@ -180,10 +209,11 @@ namespace MultiTrackHelper.Patches
                         return;
 
                     copiedEntries.Add(box);
-                    copiedBpms.Add(SourceBpm(__instance, toCopy));
+                    float sourceBpm = SourceBpm(__instance, toCopy);
+                    RecordSourceBpm(box, sourceBpm);
                     // 多砖复制在原版里是逐块追加（__state > 0），只给单砖复制打一条，免得刷屏
                     if (__state == 0)
-                        Main.Logger.Log($"PasteSync: 复制砖 {toCopy?.seqID}，记录源 BPM {copiedBpms[copiedBpms.Count - 1]}");
+                        Main.Logger.Log($"PasteSync: 复制砖 {toCopy?.seqID}，记录源 BPM {sourceBpm}");
                 }
                 catch (Exception e)
                 {
@@ -203,29 +233,42 @@ namespace MultiTrackHelper.Patches
                 internal int firstFloor;         // 剪贴板第 0 条内容粘贴后所在砖
                 internal int floorCountBefore;   // 粘贴前砖数，用来确认原游戏真的贴完了
                 internal float[] sourceBpms;     // 与剪贴板条目一一对应的源有效 BPM
+                internal bool enteredDepth;
+                internal bool captured;
             }
 
             internal static void Prefix(scnEditor __instance, out PasteState __state)
             {
-                __state = null;
+                __state = new PasteState();
                 try
                 {
-                    __state = CapturePasteState(__instance);
+                    PasteState captured = CapturePasteState(__instance);
+                    if (captured != null)
+                    {
+                        __state = captured;
+                        __state.captured = true;
+                    }
                 }
                 catch (Exception e)
                 {
                     Main.Logger.Log("PasteSync 粘贴前处理失败: " + e);
                 }
                 pasteDepth++;
+                __state.enteredDepth = true;
             }
 
-            internal static void Finalizer() => pasteDepth--;
+            internal static void Finalizer(PasteState __state)
+            {
+                if (__state != null && __state.enteredDepth && pasteDepth > 0)
+                    pasteDepth--;
+            }
 
             internal static void Postfix(scnEditor __instance, PasteState __state)
             {
                 try
                 {
-                    OnPaste(__instance, __state);
+                    if (__state != null && __state.captured)
+                        OnPaste(__instance, __state);
                 }
                 catch (Exception e)
                 {
@@ -279,26 +322,18 @@ namespace MultiTrackHelper.Patches
             if (source == null || !source.Any(IsTimedEvent))
                 return null;
 
-            // FloorData 是值类型，传进来的是拆箱副本；按它的事件列表引用找回复制时记下的那一条
-            int index = -1;
-            for (int i = 0; i < copiedEntries.Count && i < copiedBpms.Count; i++)
+            // FloorData 是值类型，传进来的是拆箱副本；按它的事件列表引用去弱表里查复制时记下的那条。
+            // 不按 tag/内容猜：查不到就是没记录过（复制时开关没开，或内容不是本模组复制的），整次粘贴不同步。
+            if (!ClipboardBpmStore.TryGetEventList(source, out float sourceBpm))
             {
-                if (copiedEntries[i] is scnEditor.FloorData copied && ReferenceEquals(copied.levelEventData, source))
-                {
-                    index = i;
-                    break;
-                }
-            }
-            if (index < 0)
-            {
-                Main.Logger.Log("PasteSync: 粘贴的这块砖没有记录过源速度（复制时开关没开、或复制后剪贴板被换过），本次粘贴不做速度同步");
+                Main.Logger.Log("PasteSync: 粘贴的这块砖没有记录过源速度（复制时开关没开，或该内容不是本模组复制的），本次粘贴不做速度同步");
                 return null;
             }
 
             return new PasteEventsPatch.PasteEventsState
             {
                 existingEvents = new HashSet<LevelEvent>(editor.events),
-                sourceBpm = copiedBpms[index]
+                sourceBpm = sourceBpm
             };
         }
 
@@ -396,15 +431,22 @@ namespace MultiTrackHelper.Patches
             if (count == 0)
                 return null;
 
-            if (!CopiedClipboardMatches(editor))
-            {
-                Main.Logger.Log($"PasteSync: 剪贴板 {count} 条与记录过的 {copiedEntries.Count} 条逐砖源速度对不上（复制时开关没开、或复制后剪贴板被换过），本次粘贴不做速度同步");
-                return null;
-            }
             if (!editor.SelectionIsSingle())
             {
                 Main.Logger.Log("PasteSync: 粘贴时没有恰好选中一块砖，本次粘贴不做速度同步");
                 return null;
+            }
+
+            // 逐盒查弱表：BPM 跟着盒子身份走，所以不要求剪贴板跟“最近一次复制”完全一致。
+            // 复制 B 后撤销/重做把剪贴板换回 A 那批盒子时，A 的 BPM 仍然查得到（旧实现到这里已经丢了）。
+            float[] sourceBpms = new float[count];
+            for (int i = 0; i < count; i++)
+            {
+                if (!ClipboardBpmStore.TryGetBox(editor.clipboard[i], out sourceBpms[i]))
+                {
+                    Main.Logger.Log($"PasteSync: 剪贴板第 {i} 条没有记录过源速度（复制时开关没开，或该内容不是本模组复制的），本次粘贴不做速度同步");
+                    return null;
+                }
             }
 
             return new PasteFloorsPatch.PasteState
@@ -412,7 +454,7 @@ namespace MultiTrackHelper.Patches
                 existingEvents = new HashSet<LevelEvent>(editor.events),
                 firstFloor = editor.selectedFloors[0].seqID + 1,
                 floorCountBefore = editor.floors.Count,
-                sourceBpms = copiedBpms.ToArray()
+                sourceBpms = sourceBpms
             };
         }
 

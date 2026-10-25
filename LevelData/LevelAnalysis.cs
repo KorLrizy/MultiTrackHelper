@@ -12,15 +12,56 @@ namespace MultiTrackHelper
     /// entryTime（真实到达时刻）、angleLength（真实扫角）、speed（变速）、holdLength、extraBeats。
     /// 不在这里用 "60 / bpm × 角度 / 180" 自己估时间——那条公式漏了多星球、变速、turnaround、
     /// 倒计时与 extraBeats。只有 ScaleRadius 与轨道透明度需要按砖累计事件。
+    /// 世界坐标一律经 <see cref="TrackGeometry"/> 换算成 tile 单位，方向/朝向的数学也在那里，这里只取数据。
     /// </summary>
     public static class LevelAnalysis
     {
+        /// <summary>
+        /// 把面板里的"砖号 + 相对位置"解析成实际砖号。兼容保留的公共入口。
+        /// 旧调用方只要求"拿一个可用砖号"，所以解析失败时退回首砖 0；内部逻辑一律用 <see cref="ResolveTileIndex"/>。
+        /// </summary>
         public static int GetIndex(object data)
         {
-            Tuple<int, TileRelativeTo> tuple = (Tuple<int, TileRelativeTo>)data;
+            int index = ResolveTileIndex(data, LastTileIndex());
+            return index < 0 ? 0 : index;
+        }
+
+        /// <summary>
+        /// "砖号 + 相对位置" → 砖号（纯函数，不读游戏状态）。
+        ///
+        /// 返回值约定：
+        /// · 能解析 → 钳到 [0, lastTile] 的砖号；加法在 long 里做，砖号接近 int.MaxValue 时不会溢出回绕成首砖；
+        /// · 解析不了（data 不是本类型的 Tuple、lastTile &lt; 0、相对位置是未定义枚举值）→ -1，
+        ///   由调用方当作"无范围"，绝不悄悄退化成首砖。
+        /// ThisTile 与 Start 等价（范围面板不提供 ThisTile，外部旧调用可能传，旧实现也是按 Start 处理）。
+        /// </summary>
+        internal static int ResolveTileIndex(object data, int lastTile)
+        {
+            if (lastTile < 0 || !(data is Tuple<int, TileRelativeTo> tuple))
+                return -1;
+
+            long offset;
+            switch (tuple.Item2)
+            {
+                case TileRelativeTo.Start:
+                case TileRelativeTo.ThisTile:
+                    offset = 0L;
+                    break;
+                case TileRelativeTo.End:
+                    offset = lastTile;
+                    break;
+                default:
+                    // 未定义的枚举值：当成非法数据，不当成 0
+                    return -1;
+            }
+
             // 作用范围按地砖编号算：最后一块有效砖的编号 = 地砖数 - 1
-            int lastTile = LastTileIndex();
-            return Mathf.Clamp(tuple.Item1 + (tuple.Item2 == TileRelativeTo.End ? lastTile : 0), 0, lastTile);
+            long index = (long)tuple.Item1 + offset;
+            if (index < 0L)
+                index = 0L;
+            else if (index > lastTile)
+                index = lastTile;
+            return (int)index;
         }
 
         public static TrackData[] GetTrackDatas(Dictionary<int, Dictionary<LevelEventType, List<LevelEvent>>> floorEvents = null)
@@ -66,20 +107,40 @@ namespace MultiTrackHelper
                 // 本砖实际生效的透明度：justThisTile 的 PositionTrack 只改该砖，不改后续砖
                 float floorOpacity = trackOpacityPercent;
 
-                // 第 0 块砖上的事件不参与半径 / 透明度 / pause 的累计（与旧实现一致）；
-                // BPM 不受这条影响：它现在直接取关卡 BPM × 该砖速度
-                if (floor > 0 && floorEvents != null
+                // 第 0 块砖上的事件同样生效：scnGame.ApplyEventsToFloors / ApplyCoreEventsToFloors 都是
+                // "从 floors[0] 起逐砖累计"（target-game/scnGame.decompiled.cs:279-285 按 floor 入桶、
+                // :366 与 :1126 两个 foreach 都从 floors[0] 开始）。ScaleRadius 与 PositionTrack.opacity
+                // 是改一次沿用到后续砖，Pause 只要求本砖不是 midspin 且有后继砖。
+                // 旧实现对 0 做了特殊处理，导致挂在首砖上的半径/透明度/暂停全部丢失。
+                if (floorEvents != null
                     && floorEvents.TryGetValue(floor, out Dictionary<LevelEventType, List<LevelEvent>> events))
                 {
+                    // Hold 的 distanceMultiplier 只填 TrackData.holdDistance（兼容字段），真正的 hold 拍数
+                    // 取 scrFloor.holdLength，两者不要混用
                     if (events.TryGetValue(LevelEventType.Hold, out List<LevelEvent> holdEvents))
                     {
-                        holdDistance = (int)holdEvents[0]["distanceMultiplier"];
+                        holdEvents[0].TryGet("distanceMultiplier", out holdDistance);
                     }
 
-                    if (events.TryGetValue(LevelEventType.Pause, out List<LevelEvent> pauseEvents))
+                    // Pause 的生效条件与游戏一致（target-game/scnGame.decompiled.cs:1144-1145）：
+                    // 本砖不是 midspin 且有后继砖。
+                    // 游戏把同砖所有 Pause 的 duration 累加进 extraBeats，这里也只累计有效值；
+                    // duration 非正或非有限的事件不产生停留，不能当成 pause（extraBeats 还会被 FreeRoam 等改写）。
+                    if (!currentFloor.midSpin && floor + 1 < listFloors.Count
+                        && events.TryGetValue(LevelEventType.Pause, out List<LevelEvent> pauseEvents))
                     {
-                        isPause = true;
-                        pauseDuration = (float)pauseEvents[0]["duration"];
+                        foreach (LevelEvent pauseEvent in pauseEvents)
+                        {
+                            float eventDuration = pauseEvent.GetFloat("duration");
+                            if (!IsFinite(eventDuration) || eventDuration <= 0f)
+                            {
+                                continue;
+                            }
+
+                            pauseDuration += eventDuration;
+                        }
+
+                        isPause = pauseDuration > 0f;
                     }
 
                     if (events.TryGetValue(LevelEventType.ScaleRadius, out List<LevelEvent> radiusEvents))
@@ -118,6 +179,7 @@ namespace MultiTrackHelper
                         }
                     }
 
+                    // hasTwirl 是公开返回字段的一部分，即使生成路径不读它也照游戏语义填写
                     if (events.ContainsKey(LevelEventType.Twirl))
                     {
                         hasTwirl = true;
@@ -151,31 +213,21 @@ namespace MultiTrackHelper
                     legacyArrival = legacyDeparture;
                 }
 
-                result[floor] = new TrackData(
-                    timing.sweepAngle,
-                    timing.head,
-                    timing.tail,
-                    hasTwirl,
-                    floor == 0 ? Vector2.zero : (Vector2)(currentFloor.transform.position / 1.5f),
+                // 快照统一由 TrackData.Snapshot 构建：时间/角度全部取 FloorTimeline，基础位置按 TrackGeometry
+                // 的同一套 tile 单位换算（不再把 1.5 写死在这里）；hasTwirl / holdDistance 是公开字段，照旧填
+                result[floor] = TrackData.Snapshot(
+                    timing,
+                    floor == 0 ? Vector2.zero : TrackGeometry.WorldToTile(currentFloor.transform.position),
                     floor == 0 ? 0f : currentFloor.transform.rotation.eulerAngles.z,
                     isPause,
                     pauseDuration,
                     isHold,
                     holdDuration,
-                    holdDistance,
                     bpm,
-                    timing.arrivalTime,
-                    timing.departureTime)
-                {
-                    radiusScale = radiusScalePercent,
-                    trackOpacity = floorOpacity,
-                    geometricAngle = timing.geometricAngle,
-                    speed = timing.speed,
-                    numPlanets = timing.numPlanets,
-                    extraBeats = timing.extraBeats,
-                    gameEntryTime = timing.gameEntryTime,
-                    gameExitTime = timing.gameExitTime
-                };
+                    radiusScalePercent,
+                    floorOpacity,
+                    hasTwirl: hasTwirl,
+                    holdDistance: holdDistance);
             }
 
             return result;
@@ -219,13 +271,19 @@ namespace MultiTrackHelper
             return result;
         }
 
+        /// <summary>
+        /// 按砖号归集关卡事件。包含第 0 块砖：游戏自身（scnGame.ApplyEventsToFloors 等）就是逐砖从
+        /// floors[0] 开始应用事件，挂在首砖上的 MoveTrack / ScaleRadius / PositionTrack / Pause 都生效。
+        /// 旧实现把 floor &lt;= 0 一律丢弃，调用方靠另走一遍 editor.events 绕开，现在两边口径一致。
+        /// 调用方需要注意：拿到的事件表现在可能包含键 0。
+        /// </summary>
         public static Dictionary<int, Dictionary<LevelEventType, List<LevelEvent>>> GetFloorEvents()
         {
             int tileCount = LastTileIndex() + 1;
             Dictionary<int, Dictionary<LevelEventType, List<LevelEvent>>> floorEvents = new Dictionary<int, Dictionary<LevelEventType, List<LevelEvent>>>();
             foreach (LevelEvent levelEvent in scnEditor.instance.events)
             {
-                if (levelEvent.floor <= 0 || levelEvent.floor >= tileCount)
+                if (levelEvent.floor < 0 || levelEvent.floor >= tileCount)
                 {
                     continue;
                 }
@@ -271,38 +329,138 @@ namespace MultiTrackHelper
             return AngleMath.Sweep(direction);
         }
 
+        /// <summary>没有任何可作用的地砖 / 面板不可用时的统一返回值，调用方靠 -1 短路。</summary>
+        private static readonly Tuple<int, int> NoRange = Tuple.Create(-1, -1);
+
+        /// <summary>
+        /// 当前面板的作用范围（闭区间）。解析失败（面板事件不存在、作用方式不可识别、没有选中砖、
+        /// 关卡里没有地砖）一律返回 (-1, -1)，由调用方短路。
+        /// 仅负责从游戏里取原始数据，判定规则全在纯函数 <see cref="ResolveAffectedRange"/> 里。
+        /// </summary>
         public static Tuple<int, int> GetAffectedRange()
         {
-            LevelEvent levelEvent = Main.GetEvent((LevelEventType)Main.MultiTrack.type);
-            int v1 = 0;
-            int v2 = 0;
-            AffectAt affect = (AffectAt)levelEvent["affectAt"];
+            LevelEvent levelEvent = Main.MultiTrack == null ? null : Main.GetEvent((LevelEventType)Main.MultiTrack.type);
+            if (levelEvent == null)
+            {
+                Main.Logger?.Log("GetAffectedRange: 找不到面板事件，按无作用范围处理");
+                return NoRange;
+            }
+
+            if (!levelEvent.TryGet("affectAt", out AffectAt affect))
+            {
+                Main.Logger?.Log("GetAffectedRange: 面板的作用方式(affectAt)不可识别，按无作用范围处理");
+                return NoRange;
+            }
+
+            // 上界必须来自实际地砖：关卡里没有砖时没有可作用的范围。
+            // 这里不用 LastTileIndex()：它在没有地砖时会退回角度数据长度，用来算范围会把范围凭空扩到空关卡上。
+            List<scrFloor> floors = RealFloors();
+            if (floors == null)
+            {
+                Main.Logger?.Log("GetAffectedRange: 当前没有实际地砖，按无作用范围处理");
+                return NoRange;
+            }
+
+            levelEvent.TryGet("affectTileRangeFrom", out Tuple<int, TileRelativeTo> rangeFrom);
+            levelEvent.TryGet("affectTileRangeTo", out Tuple<int, TileRelativeTo> rangeTo);
+            scnEditor editor = scnEditor.instance;
+            List<scrFloor> selected = editor == null ? null : editor.selectedFloors;
+            return ResolveAffectedRange(affect, rangeFrom, rangeTo, selected, floors.Count - 1);
+        }
+
+        /// <summary>
+        /// 当前关卡实际存在的地砖列表；没有就返回 null。
+        /// 与 <see cref="LastTileIndex"/> 的区别：最后找不到地砖时**不**退回到角度数据长度。
+        /// </summary>
+        private static List<scrFloor> RealFloors()
+        {
+            scrLevelMaker maker = scrLevelMaker.instance;
+            List<scrFloor> floors = maker == null ? null : maker.listFloors;
+            return floors == null || floors.Count == 0 ? null : floors;
+        }
+
+        /// <summary>
+        /// 作用范围判定（纯函数）：不读游戏状态、不改任何东西。
+        /// 先判 lastTile：小于 0（没有实际地砖）直接 (-1, -1)。
+        /// - <see cref="AffectAt.SpecificRange"/>：两端各自钳位到真实范围，再规范成正序；
+        ///   任一端解析不出来（<see cref="ResolveTileIndex"/> 返回 -1）整体算无范围；
+        /// - <see cref="AffectAt.SelectedTiles"/>：选中砖取 min/max 砖号（见 <see cref="ResolveSelectedRange"/>）；
+        /// - 其它取值（未知枚举）：(-1, -1)。
+        /// </summary>
+        internal static Tuple<int, int> ResolveAffectedRange(AffectAt affect, object rangeFrom, object rangeTo,
+            IList<scrFloor> selected, int lastTile)
+        {
+            if (lastTile < 0)
+                return NoRange;
+
             switch (affect)
             {
                 case AffectAt.SpecificRange:
-                    v1 = GetIndex(levelEvent["affectTileRangeFrom"]);
-                    v2 = GetIndex(levelEvent["affectTileRangeTo"]);
-                    break;
-                case AffectAt.SelectedTiles:
-                    if (scnEditor.instance.selectedFloors != null && scnEditor.instance.selectedFloors.Count > 0)
-                    {
-                        v1 = scnEditor.instance.selectedFloors[0].seqID;
-                        v2 = scnEditor.instance.selectedFloors[scnEditor.instance.selectedFloors.Count - 1].seqID;
-                    }
-                    else
-                    {
-                        v1 = -1;
-                        v2 = -1;
-                    }
-                    break;
-            }
+                {
+                    int from = ResolveTileIndex(rangeFrom, lastTile);
+                    int to = ResolveTileIndex(rangeTo, lastTile);
+                    // 任一端解析失败都算"没有范围"：不能拿 -1 参与比较，更不能退化成首砖静默生成
+                    if (from < 0 || to < 0)
+                        return NoRange;
 
-            return Tuple.Create(v1, v2);
+                    // 两端各自钳位后统一成正序：反向填写（to < from）与游戏里"拖反"的选区语义等价
+                    return from <= to ? Tuple.Create(from, to) : Tuple.Create(to, from);
+                }
+                case AffectAt.SelectedTiles:
+                    return ResolveSelectedRange(selected, lastTile);
+                default:
+                    return NoRange;
+            }
         }
 
+        /// <summary>
+        /// 选中砖范围：取所有选中砖 seqID 的最小/最大值（忽略 null 元素），再钳到 [0, lastTile]。
+        /// 用 min/max 而不是首尾元素，是因为 selectedFloors 的顺序取决于选择方式，不一定递增。
+        /// 没有选中砖（或全是 null）时返回 (-1, -1)。
+        /// </summary>
+        internal static Tuple<int, int> ResolveSelectedRange(IList<scrFloor> selected, int lastTile)
+        {
+            if (selected == null || selected.Count == 0 || lastTile < 0)
+            {
+                return NoRange;
+            }
+
+            int min = int.MaxValue;
+            int max = int.MinValue;
+            for (int i = 0; i < selected.Count; i++)
+            {
+                scrFloor floor = selected[i];
+                if (floor == null)
+                {
+                    continue;
+                }
+
+                int id = floor.seqID;
+                if (id < min) min = id;
+                if (id > max) max = id;
+            }
+
+            if (min == int.MaxValue)
+            {
+                return NoRange;
+            }
+
+            return Tuple.Create(Mathf.Clamp(min, 0, lastTile), Mathf.Clamp(max, 0, lastTile));
+        }
+
+        /// <summary>
+        /// 两方向的中点方向。保留的公共入口（外部兼容）：假轨道朝向已改为
+        /// <see cref="TrackGeometry.TrackRotation"/>：它在真弧平分线之外还扣掉了装饰自身的参考姿态。
+        /// </summary>
         public static float GetMidDirection(float startDirection, float endDirection, bool isCCW, bool goFullCircleIfEqual)
         {
             return AngleMath.MidDirection(startDirection, endDirection, isCCW, goFullCircleIfEqual);
+        }
+
+        /// <summary>有限值判断：NaN / ±Infinity 一律视为不可用。</summary>
+        private static bool IsFinite(float value)
+        {
+            return !float.IsNaN(value) && !float.IsInfinity(value);
         }
 
         /// <summary>最后一块有效砖的编号；地砖列表不可用时退回关卡角度数据长度。</summary>
@@ -362,6 +520,7 @@ namespace MultiTrackHelper
             public float angle;
             public float head;
             public float tail;
+            /// <summary>该砖上是否有 Twirl 事件（公开字段，按砖扫描填入；生成路径不消费）。</summary>
             public bool hasTwirl;
             public Vector2 position;
             public float rotation;
@@ -369,6 +528,10 @@ namespace MultiTrackHelper
             public float pauseDuration;
             public bool isHold;
             public int holdDuration;
+            /// <summary>
+            /// 该砖首条 Hold 事件的 distanceMultiplier（原始百分比整数，公开字段；生成路径不消费）。
+            /// 注意它与 scrFloor.holdDistance 的"格数"口径不同，真正生效的 hold 拍数是 <see cref="holdDuration"/>。
+            /// </summary>
             public int holdDistance;
             public float bpm;
             public float arrivalTime;
@@ -390,6 +553,10 @@ namespace MultiTrackHelper
             /// <summary>游戏原始离开时刻（下一砖 entryTime，末砖为推算值，同样含倒计时）。</summary>
             public double gameExitTime;
 
+            /// <summary>
+            /// 兼容构造器：只为旧调用方保留原签名与字段语义，数据层已不再用它（改为 <see cref="Snapshot"/>），
+            /// 避免 14 个位置参数的调用表继续扩散。
+            /// </summary>
             public TrackData(float angle, float head, float tail, bool hasTwirl, Vector2 position, float rotation, bool isPause, float pauseDuration, bool isHold, int holdDuration, int holdDistance, float bpm, float arrivalTime, float departureTime)
             {
                 this.angle = angle;
@@ -406,6 +573,43 @@ namespace MultiTrackHelper
                 this.bpm = bpm;
                 this.arrivalTime = arrivalTime;
                 this.departureTime = departureTime;
+            }
+
+            /// <summary>
+            /// 从时间线快照 + 本砖状态构造一块砖的轨道数据（内部构建入口，取代 14 参数构造调用）。
+            /// 时间/角度类字段全部来自 <see cref="FloorTimeline.Entry"/>，
+            /// 只剩"这块砖此刻的游戏状态"作为参数：位置、自身旋转、暂停、hold、BPM、半径、透明度。
+            /// hasTwirl / holdDistance 是公开字段，照旧由数据层扫描填入，但生成路径不消费它们。
+            /// </summary>
+            internal static TrackData Snapshot(FloorTimeline.Entry timing, Vector2 position, float rotation,
+                bool isPause, float pauseDuration, bool isHold, int holdDuration, float bpm,
+                float radiusScalePercent, float trackOpacityPercent, bool hasTwirl = false, int holdDistance = 0)
+            {
+                return new TrackData(
+                    timing.sweepAngle,
+                    timing.head,
+                    timing.tail,
+                    hasTwirl,
+                    position,
+                    rotation,
+                    isPause,
+                    pauseDuration,
+                    isHold,
+                    holdDuration,
+                    holdDistance,
+                    bpm,
+                    timing.arrivalTime,
+                    timing.departureTime)
+                {
+                    radiusScale = radiusScalePercent,
+                    trackOpacity = trackOpacityPercent,
+                    geometricAngle = timing.geometricAngle,
+                    speed = timing.speed,
+                    numPlanets = timing.numPlanets,
+                    extraBeats = timing.extraBeats,
+                    gameEntryTime = timing.gameEntryTime,
+                    gameExitTime = timing.gameExitTime
+                };
             }
         }
     }

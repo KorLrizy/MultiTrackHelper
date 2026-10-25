@@ -121,11 +121,9 @@ namespace MultiTrackHelper.Features
                 else
                     CreateAnimation(editor, dataPanel, trackDatas, random, affectTileRangeFrom, affectTileRangeTo, tag);
 
-                editor.RemakePath(true, false);
-                // 不传 remakeLevel=true：新版游戏里 RemakePath(.*, true) 会用 levelData.angleData
-                // 重建 floorAngles 并按 floorAngles.Length-1 裁剪 listFloors，使
-                // "listFloors.Count == floorAngles.Length + 1" 的数量关系失效，
-                // 下一次创建时 GetTrackDatas 越界。只应用事件、不重铺关卡即可刷新装饰/事件。
+                // RemakePath(true, false) skips ApplyEventsToFloors inside the game.
+                // Apply directly: rebuild event buckets/icons and decoration preview without rebuilding geometry.
+                MultiTrackHelper.Utils.EditorRefresh.AfterWrite(editor);
                 if (trackFeatures == TrackFeatures.CreateAnimation)
                 {
                     editor.DeselectFloors();
@@ -163,6 +161,7 @@ namespace MultiTrackHelper.Features
             TrackDistribution trackDistribution = dataPanel.Get<TrackDistribution>("TrackDistribution");
             bool isCentralized = trackDistribution == TrackDistribution.Centralized;
             TrackGenerationMode trackGenerationMode = dataPanel.Get<TrackGenerationMode>("trackGenerationMode");
+            MotionOutputMode outputMode = ReadMotionOutputMode(dataPanel);
             float trackRotationValue = dataPanel.Get<float>("trackRotation");
             float pivotTrackOffset = isCentralized ? trackRotationValue : 0;
             // "同步大小"：假轨道的 scale 跟随真轨道的星球半径大小(ScaleRadius)，
@@ -189,8 +188,9 @@ namespace MultiTrackHelper.Features
             Vector2 genOffset = dataPanel.Get<Vector2>("generationPosition");
             int planetDepth = useIncreasingDepth ? dataPanel.Get<int>("initialDepth") - 1 : baseDepth;
 
-            // 源轨派发计划只收一次：星球跟随烘焙与假轨道副本读同一份不可变快照，两条链路对展开的口径才不会分叉
-            List<MoveTrackDispatch> moveTrackDispatches = syncMoveTrack
+            // 星球粘性跟随与轨道副本同步独立。轴心模式禁止复制轨道移动，不能连带停用星球跟随。
+            // 两条链路仍共用一次派发快照；是否烘焙由关卡/逐砖 stickToFloors 决定。
+            List<MoveTrackDispatch> moveTrackDispatches = (syncMoveTrack || usePlanet)
                 ? CollectMoveTrackDispatches(editor, listFloors, from, to, isCentralized)
                 : null;
 
@@ -201,8 +201,13 @@ namespace MultiTrackHelper.Features
             {
                 CreatePlanets(editor, dataPanel, from, pivotTrackOffset, tag, bluePlanetTag, redPlanetTag, planetDepth, genOffset);
                 PlanetMotionSettings planetMotionSettings = PlanetMotionSettings.Read(dataPanel, bluePlanetTag, redPlanetTag);
+                planetMotionSettings.outputMode = outputMode;
                 planetMotion = PlanetMotionPlanner.Build(planetMotionSettings, trackDatas, listFloors,
                     editor.levelData.bpm, from, to, pivotTrackOffset);
+                if (planetMotion.approximations.Count > 0)
+                    Main.Logger?.Log("PlanetMotion: " + string.Join("；", planetMotion.approximations.OrderBy(value => value)));
+                if (from == 0 && planetMotionSettings.firstFloorCountdownBeats > 0f)
+                    Main.Logger?.Log("PlanetMotion: 首砖星球相位含倒计时，轨道几何角保持不变；请真机检查开局视觉");
             }
 
             int trackDepth = dataPanel.Get<int>("initialDepth");
@@ -224,8 +229,7 @@ namespace MultiTrackHelper.Features
 
                 float trackRotation = listFloors[floor].midSpin
                     ? trackDatas[floor].head
-                    : LevelAnalysis.GetMidDirection(trackDatas[floor].tail, trackDatas[floor].head, listFloors[floor].isCCW, true)
-                      - LevelAnalysis.GetMidDirection(180, (360 - ((trackDatas[floor].geometricAngle + 180) % 360)) % 360, false, true);
+                    : TrackGeometry.TrackRotation(trackDatas[floor].tail, trackDatas[floor].head, listFloors[floor].isCCW, trackDatas[floor].geometricAngle);
                 levelEvent["rotation"] = trackRotation + trackDatas[floor].rotation;
 
                 // 单砖标签：MoveDecorations 靠它定位这一块假轨道
@@ -331,10 +335,10 @@ namespace MultiTrackHelper.Features
             // 放在假轨道副本之前：两者写的是不同对象的属性，运行期游戏会按触发时刻重排，这里只保证登记顺序稳定
             HashSet<string> bakedPlanetTags = null;
             List<LevelEvent> bakedPlanetEvents = null;
-            if (usePlanet && syncMoveTrack && planetMotion != null)
+            if (usePlanet && planetMotion != null)
             {
                 bakedPlanetEvents = BakePlanetTrackMotion(editor, listFloors, from, to, pivotTrackOffset, genOffset,
-                    bluePlanetTag, redPlanetTag, planetMotion, moveTrackDispatches, out bakedPlanetTags);
+                    bluePlanetTag, redPlanetTag, planetMotion, moveTrackDispatches, out bakedPlanetTags, outputMode);
             }
 
             if (planetMotion != null)
@@ -347,7 +351,17 @@ namespace MultiTrackHelper.Features
             }
 
             if (syncMoveTrack)
+            {
+                int before = editor.events.Count;
                 CopyMoveTracks(editor, moveTrackDispatches, from, tag);
+                if (outputMode == MotionOutputMode.Simple)
+                {
+                    List<LevelEvent> copied = editor.events.Skip(before).ToList();
+                    MergeEquivalentMotionTargets(copied);
+                    editor.events.RemoveRange(before, editor.events.Count - before);
+                    editor.events.AddRange(copied);
+                }
+            }
 
             // 与"同步移动轨道"各自独立：不跟随移动时风格变化照样要搬
             if (syncStyle)
@@ -528,7 +542,8 @@ namespace MultiTrackHelper.Features
             for (int sourceIndex = 0; sourceIndex < snapshot.Length; sourceIndex++)
             {
                 LevelEvent source = snapshot[sourceIndex];
-                // 不走 GetFloorEvents：那份表按 floor>0 过滤，会漏掉挂在第 0 块砖上的 MoveTrack
+                // 直接扫 editor.events 而不是 GetFloorEvents：这里要保留原始下标（事件顺序影响同砖登记顺序），
+                // 并且要保留挂在第 0 块砖上的 MoveTrack
                 if (source == null || !source.active || source.eventType != LevelEventType.MoveTrack)
                     continue;
 
@@ -766,6 +781,7 @@ namespace MultiTrackHelper.Features
                         levelEvent.disabled[property.Key] = true;
                 }
 
+                PlanetMotionPlanner.SetGeneratedNote(levelEvent, "移动轨道");
                 levelEvent["tag"] = ResolveTileTag(tag, tile - from + 1);
                 levelEvent["duration"] = dispatch.duration;
                 levelEvent["angleOffset"] = dispatch.angleOffset;
@@ -1233,12 +1249,15 @@ namespace MultiTrackHelper.Features
                 int chosen = -1;
                 for (int i = 0; i < segments.Count; i++)
                 {
-                    if (beforeBoundary ? segments[i].startTime < t : segments[i].startTime <= t) chosen = i;
+                    // 时间边界会经过 float angleOffset 编码；同一砖时刻可能只差末位。
+                    // 与烘焙边界合并使用同一容差，左极限不能误取右侧 snap，右值也不能漏掉同刻 snap。
+                    if (beforeBoundary ? segments[i].startTime < t - PlanetTimeEpsilon
+                        : segments[i].startTime <= t + PlanetTimeEpsilon) chosen = i;
                 }
                 if (chosen < 0) return 0f;
 
                 PlanetMotionSegment segment = segments[chosen];
-                if (segment.duration <= 0.0 || t >= segment.startTime + segment.duration) return segment.target;
+                if (segment.duration <= 0.0 || t >= segment.startTime + segment.duration - PlanetTimeEpsilon) return segment.target;
                 float percent = (float)((t - segment.startTime) / segment.duration);
                 if (percent < 0f) percent = 0f;
                 if (percent > 1f) percent = 1f;
@@ -1285,7 +1304,8 @@ namespace MultiTrackHelper.Features
         /// </summary>
         private static List<LevelEvent> BakePlanetTrackMotion(scnEditor editor, List<scrFloor> listFloors, int from, int to,
             float pivotTrackOffset, Vector2 genOffset, string bluePlanetTag, string redPlanetTag,
-            PlanetMotionPlan planetMotion, List<MoveTrackDispatch> dispatches, out HashSet<string> bakedPlanetTags)
+            PlanetMotionPlan planetMotion, List<MoveTrackDispatch> dispatches, out HashSet<string> bakedPlanetTags,
+            MotionOutputMode outputMode = MotionOutputMode.FrameByFrame)
         {
             List<LevelEvent> bakedEvents = new List<LevelEvent>();
             bakedPlanetTags = new HashSet<string>(StringComparer.Ordinal);
@@ -1362,7 +1382,7 @@ namespace MultiTrackHelper.Features
                 }
 
                 int emitted = BakeOnePlanetMotion(bakedEvents, listFloors, from, to, pivotTrackOffset, tileSize,
-                    timelineStart, anchorEffBpm, planetAnchor, genOffset, planetTag, bakedEventTag, baseCurves, motions, sticky, timelineEnd);
+                    timelineStart, anchorEffBpm, planetAnchor, genOffset, planetTag, bakedEventTag, baseCurves, motions, sticky, timelineEnd, outputMode);
                 if (emitted <= 0)
                     continue;
 
@@ -1372,12 +1392,14 @@ namespace MultiTrackHelper.Features
 
             if (totalEmitted > 0)
             {
-                Main.Logger.Log($"BakePlanetTrackMotion: 星球跟随按自适应 Linear 分段烘焙 {totalEmitted} 条事件" +
+                Main.Logger.Log($"BakePlanetTrackMotion: 星球跟随输出模式 {outputMode}，整理前 {totalEmitted} 条事件" +
                                 $"（位置容差 {PlanetPositionTolerance} tile、旋转容差 {PlanetRotationTolerance}°，独立缓动曲线为近似不是逐帧精确）");
                 if (hasExternal)
                     Main.Logger.Log("BakePlanetTrackMotion: 本批混有外部触发的移动，只烘焙了自动触发的跟随，外部触发时段星球未同步（其副本仍按原标签生成）");
             }
 
+            if (outputMode == MotionOutputMode.Simple)
+                MergeEquivalentMotionTargets(bakedEvents);
             return bakedEvents;
         }
 
@@ -1472,16 +1494,14 @@ namespace MultiTrackHelper.Features
             return flags;
         }
 
+        /// <summary>
+        /// 一格的边长（世界单位）。转发到 <see cref="TrackGeometry.TileSize"/>：位移换算用游戏真实 tileSize
+        /// （MoveTrack/MoveDecorations 都按它折算），拿不到有效值才退回旧硬编码值 1.5。
+        /// 与 LevelAnalysis 的基础位置换算共用同一个来源，烘焙与生成的格子口径不会分叉。
+        /// </summary>
         private static float ResolveTileSize()
         {
-            // 位移换算用游戏真实 tileSize（MoveTrack/MoveDecorations 都按它折算），拿不到才退回旧硬编码值
-            scrController controller = ADOBase.controller;
-            if (controller != null)
-            {
-                float size = controller.tileSize;
-                if (IsUsable(size) && size > 0f) return size;
-            }
-            return 1.5f;
+            return TrackGeometry.TileSize;
         }
 
         /// <summary>
@@ -1506,17 +1526,19 @@ namespace MultiTrackHelper.Features
                 timed.Add(draft);
             }
 
-            // 基础星球事件是"绝对目标"语义：位置/旋转都整体替换，不累加；
-            // 未写某个属性时事件里仍是启用状态、值为默认 0，曲线按 0 记段（与旧读回口径一致）
+            // 只有明确写入的属性才替换该轴；缺省 positionOffset 是 NaN/NaN（不修改），绝不是 0/0。
+            // 旋转补间必须保持之前的 snap 根位置，否则烘焙会凭空生成“根位置回原点”的运动。
             Ease defaultEase = GetDefaultMoveDecorationsEase();
             foreach (PlanetMotionDraft draft in timed.OrderBy(draft => draft.startTime))
             {
-                float x = draft.hasPosition ? draft.position.x : 0f;
-                float y = draft.hasPosition ? draft.position.y : 0f;
-                if (IsUsable(x)) curves[0].Append(draft.startTime, draft.durationSeconds, x, defaultEase);
-                if (IsUsable(y)) curves[1].Append(draft.startTime, draft.durationSeconds, y, defaultEase);
-                float rotation = draft.hasRotation ? draft.rotation : 0f;
-                if (IsUsable(rotation)) curves[2].Append(draft.startTime, draft.durationSeconds, rotation, defaultEase);
+                if (draft.hasPosition)
+                {
+                    if (IsUsable(draft.position.x)) curves[0].Append(draft.startTime, draft.durationSeconds, draft.position.x, defaultEase);
+                    if (IsUsable(draft.position.y)) curves[1].Append(draft.startTime, draft.durationSeconds, draft.position.y, defaultEase);
+                }
+                if (draft.hasRotation && IsUsable(draft.rotation))
+                    curves[2].Append(draft.startTime, draft.durationSeconds, draft.rotation,
+                        draft.inBackEase ? Ease.InBack : draft.outSineEase ? Ease.OutSine : draft.linearEase ? Ease.Linear : defaultEase);
             }
             return curves;
         }
@@ -1569,18 +1591,33 @@ namespace MultiTrackHelper.Features
         private static int BakeOnePlanetMotion(List<LevelEvent> output, List<scrFloor> listFloors, int from, int to,
             float pivotTrackOffset, float tileSize, double timelineStart, double anchorEffBpm,
             Vector2 planetAnchor, Vector2 geometryAnchor, string planetTag, string eventTag, PlanetMotionCurve[] baseCurves,
-            Dictionary<int, PlanetMotionCurve[]> motions, bool[] sticky, double timelineEnd)
+            Dictionary<int, PlanetMotionCurve[]> motions, bool[] sticky, double timelineEnd,
+            MotionOutputMode outputMode = MotionOutputMode.FrameByFrame, int simpleAxis = -1)
         {
+            // Independent runtime channels must not inherit each other's segmentation boundaries.
+            if (outputMode == MotionOutputMode.Simple && simpleAxis < 0)
+            {
+                int total = 0;
+                List<LevelEvent> channels = new List<LevelEvent>();
+                for (int axis = 0; axis < 3; axis++)
+                    total += BakeOnePlanetMotion(channels, listFloors, from, to, pivotTrackOffset, tileSize,
+                        timelineStart, anchorEffBpm, planetAnchor, geometryAnchor, planetTag, eventTag,
+                        baseCurves, motions, sticky, timelineEnd, outputMode, axis);
+                output.AddRange(channels.OrderBy(e => e.Get<float>("angleOffset")));
+                return total;
+            }
             double duration = timelineEnd - timelineStart;
             if (double.IsNaN(duration) || double.IsInfinity(duration) || duration <= PlanetTimeEpsilon)
                 return 0;
 
             List<double> marks = new List<double> { timelineStart, timelineEnd };
-            foreach (PlanetMotionCurve curve in baseCurves)
-                curve.CollectBoundaryTimes(marks);
+            for (int axis = 0; axis < 3; axis++)
+                if (simpleAxis < 0 || (simpleAxis == 2 ? axis == 2 : axis < 2))
+                    baseCurves[axis].CollectBoundaryTimes(marks);
             foreach (PlanetMotionCurve[] axes in motions.Values)
-                foreach (PlanetMotionCurve curve in axes)
-                    curve.CollectBoundaryTimes(marks);
+                for (int axis = 0; axis < 3; axis++)
+                    if (simpleAxis < 0 || simpleAxis != 2 || axis == 2)
+                        axes[axis].CollectBoundaryTimes(marks);
             for (int floor = from; floor <= to; floor++)
             {
                 if (listFloors[floor] != null) marks.Add(listFloors[floor].entryTime);
@@ -1618,10 +1655,27 @@ namespace MultiTrackHelper.Features
                 // 与上一区间终点已在容差内一致时不重复写
                 if (!hasPrevious || !IsPoseWithinTolerance(leftPose, previous))
                 {
-                    if (AppendPlanetPoseEvent(output, from, timelineStart, anchorEffBpm, planetTag, eventTag, leftPose, left, left))
+                    bool added;
+                    if (outputMode == MotionOutputMode.Simple)
+                    {
+                        Vector2 deltaTarget = new Vector2(simpleAxis == 0 && (!hasPrevious || Mathf.Abs(leftPose.offset.x - previous.offset.x) > 0.000001f) ? leftPose.offset.x : float.NaN,
+                            simpleAxis == 1 && (!hasPrevious || Mathf.Abs(leftPose.offset.y - previous.offset.y) > 0.000001f) ? leftPose.offset.y : float.NaN);
+                        float rotationTarget = simpleAxis == 2 && (!hasPrevious || Mathf.Abs(leftPose.rotation - previous.rotation) > 0.000001f) ? leftPose.rotation : float.NaN;
+                        added = AppendSimpleMotionEvent(output, from, timelineStart, anchorEffBpm, planetTag, eventTag,
+                            deltaTarget, rotationTarget, left, left, Ease.Linear);
+                    }
+                    else added = AppendPlanetPoseEvent(output, from, timelineStart, anchorEffBpm, planetTag, eventTag, leftPose, left, left);
+                    if (added)
                         emitted++;
                     else
                         skipped++;
+                }
+
+                if (outputMode == MotionOutputMode.Simple && TryEmitSimple(left, right, leftPose, rightPose))
+                {
+                    previous = rightPose;
+                    hasPrevious = true;
+                    continue;
                 }
 
                 List<double> interior = new List<double>();
@@ -1644,7 +1698,7 @@ namespace MultiTrackHelper.Features
                         continue;
                     }
                     if (pending) timeQuantized = true;
-                    if (AppendPlanetPoseEvent(output, from, timelineStart, anchorEffBpm, planetTag, eventTag, piecePose, pieceStart, pieceEnd))
+                    if (AppendAxisPose(piecePose, pieceStart, pieceEnd))
                         emitted++;
                     else
                         skipped++;
@@ -1654,7 +1708,7 @@ namespace MultiTrackHelper.Features
                 if (pending)
                 {
                     timeQuantized = true;
-                    if (AppendPlanetPoseEvent(output, from, timelineStart, anchorEffBpm, planetTag, eventTag, rightPose, right, right))
+                    if (AppendAxisPose(rightPose, right, right))
                         emitted++;
                     else
                         skipped++;
@@ -1670,7 +1724,7 @@ namespace MultiTrackHelper.Features
                 PlanetPose terminal = PoseAt(timelineEnd, false);
                 if (!IsPoseWithinTolerance(terminal, previous))
                 {
-                    if (AppendPlanetPoseEvent(output, from, timelineStart, anchorEffBpm, planetTag, eventTag, terminal, timelineEnd, timelineEnd))
+                    if (AppendAxisPose(terminal, timelineEnd, timelineEnd))
                         emitted++;
                     else
                         skipped++;
@@ -1684,6 +1738,108 @@ namespace MultiTrackHelper.Features
             if (skipped > 0)
                 Main.Logger.Log($"BakePlanetTrackMotion: 星球 {planetTag} 有 {skipped} 个采样点数值不可用，已跳过");
             return emitted;
+
+            bool AppendAxisPose(PlanetPose pose, double left, double right)
+            {
+                if (simpleAxis < 0)
+                    return AppendPlanetPoseEvent(output, from, timelineStart, anchorEffBpm, planetTag, eventTag, pose, left, right);
+                return AppendSimpleMotionEvent(output, from, timelineStart, anchorEffBpm, planetTag, eventTag,
+                    new Vector2(simpleAxis == 0 ? pose.offset.x : float.NaN, simpleAxis == 1 ? pose.offset.y : float.NaN),
+                    simpleAxis == 2 ? pose.rotation : float.NaN, left, right, Ease.Linear);
+            }
+
+            bool TryEmitSimple(double left, double right, PlanetPose a, PlanetPose b)
+            {
+                if (!IsPositiveSegmentRepresentable(left, right)) return false;
+                // 每轴独立保留原生缓动。区间内必须能由单一原生缓动表达；否则整段回退旧采样。
+                int phase = PhaseFloorAt(left, false);
+                PlanetMotionCurve[] sourceAxes = phase < sticky.Length && sticky[phase] && motions.TryGetValue(phase, out PlanetMotionCurve[] foundAxes)
+                    ? foundAxes : NewPlanetMotionCurves();
+                // 保守的结构门禁：动态旋转复合不作闭式简化；被边界截断的非线性缓动不能重启成同名 ease。
+                if (simpleAxis != 2 && Mathf.Abs(sourceAxes[2].Evaluate(right, true) - sourceAxes[2].Evaluate(left, false)) > 0.000001f) return false;
+                IEnumerable<PlanetMotionCurve> relevant = simpleAxis == 2
+                    ? new[] { baseCurves[2], sourceAxes[2] }
+                    : baseCurves.Take(2).Concat(sourceAxes);
+                foreach (PlanetMotionCurve c in relevant)
+                {
+                    PlanetMotionSegment? active = null;
+                    foreach (PlanetMotionSegment segment in c.segments)
+                        if (segment.startTime <= left + PlanetTimeEpsilon) active = segment;
+                    if (!active.HasValue) continue;
+                    PlanetMotionSegment value = active.Value;
+                    if (value.ease != Ease.Linear && value.duration > 0 && left < value.startTime + value.duration - PlanetTimeEpsilon
+                        && (Math.Abs(left - value.startTime) > PlanetTimeEpsilon
+                            || Math.Abs(right - value.startTime - value.duration) > PlanetTimeEpsilon)) return false;
+                }
+                Ease[] candidates = new[] { Ease.Linear }.Concat(baseCurves.SelectMany(c => c.segments).Select(s => s.ease))
+                    .Concat(motions.Values.SelectMany(axes => axes).SelectMany(c => c.segments).Select(s => s.ease)).Distinct().ToArray();
+                float sourceRotation = sourceAxes[2].Evaluate(left, false);
+                double sourceRadians = sourceRotation * Math.PI / 180.0;
+                double pivotRadians = pivotTrackOffset * Math.PI / 180.0;
+                // 先证明每个轴的活跃贡献共享同一时间形状，再作数值交叉检查。
+                // 同一完整非线性 ease 可按常数系数相加，Linear 可截取；不同非线性/错窗不可直接重启。
+                bool SameShape(int axis)
+                {
+                    List<PlanetMotionCurve> contributors = new List<PlanetMotionCurve>();
+                    if (axis == 2) { contributors.Add(baseCurves[2]); contributors.Add(sourceAxes[2]); }
+                    else
+                    {
+                        double c = Math.Cos(sourceRadians), s = Math.Sin(sourceRadians);
+                        double pc = Math.Cos(pivotRadians), ps = Math.Sin(pivotRadians);
+                        if (Math.Abs(axis == 0 ? c : s) > 1e-7) contributors.Add(baseCurves[0]);
+                        if (Math.Abs(axis == 0 ? s : c) > 1e-7) contributors.Add(baseCurves[1]);
+                        if (Math.Abs(axis == 0 ? pc : ps) > 1e-7) contributors.Add(sourceAxes[0]);
+                        if (Math.Abs(axis == 0 ? ps : pc) > 1e-7) contributors.Add(sourceAxes[1]);
+                    }
+                    Ease? shape = null;
+                    foreach (PlanetMotionCurve curve in contributors)
+                    {
+                        PlanetMotionSegment? segment = null;
+                        foreach (PlanetMotionSegment item in curve.segments)
+                            if (item.startTime <= left + PlanetTimeEpsilon) segment = item;
+                        if (!segment.HasValue) continue;
+                        PlanetMotionSegment value = segment.Value;
+                        if (value.duration <= 0 || left >= value.startTime + value.duration - PlanetTimeEpsilon
+                            || Mathf.Abs(value.target - value.startValue) < 0.000001f) continue;
+                        if (shape.HasValue && shape.Value != value.ease) return false;
+                        shape = value.ease;
+                    }
+                    return true;
+                }
+                if (!SameShape(simpleAxis)) return false;
+                float[] starts = { a.offset.x, a.offset.y, a.rotation };
+                float[] ends = { b.offset.x, b.offset.y, b.rotation };
+                Ease[] chosen = new Ease[3];
+                for (int axis = simpleAxis; axis <= simpleAxis; axis++)
+                {
+                    bool found = false;
+                    foreach (Ease ease in candidates)
+                    {
+                        bool fits = true;
+                        for (int sample = 1; sample < 32; sample++)
+                        {
+                            float p = sample / 32f;
+                            PlanetPose actual = PoseAt(left + (right - left) * p, false);
+                            float value = axis == 0 ? actual.offset.x : axis == 1 ? actual.offset.y : actual.rotation;
+                            float expected = starts[axis] + (ends[axis] - starts[axis]) * DOVirtual.EasedValue(0f, 1f, p, ease);
+                            // 严格数值门限，远小于采样容差；旋转不取模，不能把整圈误当静止。
+                            if (Mathf.Abs(value - expected) > (axis == 2 ? 0.0001f : 0.00001f)) { fits = false; break; }
+                        }
+                        if (fits) { chosen[axis] = ease; found = true; break; }
+                    }
+                    if (!found) return false;
+                }
+                for (int axis = simpleAxis; axis <= simpleAxis; axis++)
+                {
+                    if (Mathf.Abs(starts[axis] - ends[axis]) < 0.000001f) continue;
+                    PlanetPose target;
+                    target.offset = new Vector2(axis == 0 ? ends[0] : float.NaN, axis == 1 ? ends[1] : float.NaN);
+                    target.rotation = axis == 2 ? ends[2] : float.NaN;
+                    if (AppendSimpleMotionEvent(output, from, timelineStart, anchorEffBpm, planetTag, eventTag,
+                        target.offset, target.rotation, left, right, chosen[axis])) emitted++;
+                }
+                return true;
+            }
 
             bool IsPositiveSegmentRepresentable(double start, double end)
             {
@@ -1701,7 +1857,8 @@ namespace MultiTrackHelper.Features
                 for (int floor = from; floor <= to; floor++)
                 {
                     scrFloor tile = listFloors[floor];
-                    if (tile != null && (beforeBoundary ? (double)tile.entryTime < t : (double)tile.entryTime <= t))
+                    if (tile != null && (beforeBoundary ? tile.entryTime < t - PlanetTimeEpsilon
+                        : tile.entryTime <= t + PlanetTimeEpsilon))
                         phase = floor;
                 }
                 return phase;
@@ -1733,6 +1890,12 @@ namespace MultiTrackHelper.Features
                 PlanetPose pose;
                 pose.offset = center + translation + LevelAnalysis.GetPivotOffset(root - center, -rotationDelta) - planetAnchor;
                 pose.rotation = baseRotation + rotationDelta;
+                if (simpleAxis >= 0)
+                {
+                    if (simpleAxis != 0) pose.offset.x = 0f;
+                    if (simpleAxis != 1) pose.offset.y = 0f;
+                    if (simpleAxis != 2) pose.rotation = 0f;
+                }
                 return pose;
             }
 
@@ -1748,6 +1911,7 @@ namespace MultiTrackHelper.Features
 
             bool RawSweepWithinLimit(double left, double right)
             {
+                if (simpleAxis >= 0 && simpleAxis != 2) return true;
                 float baseSweep = baseCurves[2].Evaluate(right, true) - baseCurves[2].Evaluate(left, false);
                 if (!(Mathf.Abs(baseSweep) <= PlanetMaxSampleSweep)) return false;
 
@@ -1816,6 +1980,7 @@ namespace MultiTrackHelper.Features
                     levelEvent.disabled[property.Key] = true;
             }
 
+            PlanetMotionPlanner.SetGeneratedNote(levelEvent, "移动星球");
             levelEvent["tag"] = planetTag;
             levelEvent["duration"] = duration;
             levelEvent["angleOffset"] = angleOffsetValue;
@@ -1830,6 +1995,110 @@ namespace MultiTrackHelper.Features
             levelEvent["rotationOffset"] = pose.rotation;
             output.Add(levelEvent);
             return true;
+        }
+
+        private static MotionOutputMode ReadMotionOutputMode(LevelEvent panel)
+        {
+            return panel != null && panel.TryGet("motionOutputMode", out MotionOutputMode mode)
+                && mode == MotionOutputMode.FrameByFrame ? mode : MotionOutputMode.Simple;
+        }
+
+        private static bool AppendSimpleMotionEvent(List<LevelEvent> output, int floor, double anchorTime, double bpm,
+            string tag, string eventTag, Vector2 position, float rotation, double start, double end, Ease ease)
+        {
+            float offset = (float)((start - anchorTime) * bpm * 3.0);
+            float duration = (float)((end - start) * bpm / 60.0);
+            if (!IsUsable(offset) || !IsUsable(duration) || duration < 0f) return false;
+            if (!IsUsable(position.x) && !IsUsable(position.y) && !IsUsable(rotation)) return false;
+            LevelEvent e = new LevelEvent(floor, LevelEventType.MoveDecorations);
+            foreach (KeyValuePair<string, PropertyInfo> p in e.info.propertiesInfo)
+                if (p.Value.canBeDisabled) e.disabled[p.Key] = true;
+            e["relativeTo"] = DecPlacementType.Tile;
+            e["tag"] = tag;
+            e["eventTag"] = eventTag ?? "";
+            e["angleOffset"] = offset;
+            e["duration"] = duration;
+            e["ease"] = ease;
+            if (IsUsable(position.x) || IsUsable(position.y))
+            {
+                e.disabled["positionOffset"] = false;
+                e["positionOffset"] = position;
+            }
+            if (IsUsable(rotation))
+            {
+                e.disabled["rotationOffset"] = false;
+                e["rotationOffset"] = rotation;
+            }
+            PlanetMotionPlanner.SetGeneratedNote(e, "移动星球");
+            output.Add(e);
+            return true;
+        }
+
+        // 通用整理：只合并除目标 tag 外序列化字段完全相同的移动装饰，绝不改缓动或跨时刻合并。
+        // 外部事件标签/备注也参与比较，避免误合并触发域；不同目标不会互相 Kill。
+        private static void MergeEquivalentMotionTargets(List<LevelEvent> events)
+        {
+            Dictionary<string, LevelEvent> seen = new Dictionary<string, LevelEvent>(StringComparer.Ordinal);
+            for (int i = 0; i < events.Count; i++)
+            {
+                LevelEvent e = events[i];
+                if (e == null || e.eventType != LevelEventType.MoveDecorations) continue;
+                string key = MotionEventKey(e);
+                if (key == null) continue;
+                if (!seen.TryGetValue(key, out LevelEvent previous)) { seen[key] = e; continue; }
+                HashSet<string> currentTargets = new HashSet<string>((e.GetString("tag") ?? "")
+                    .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries), StringComparer.Ordinal);
+                string[] previousTargets = (previous.GetString("tag") ?? "")
+                    .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                // 同一对象重复执行也可能影响 Kill 顺序；这种情况不压缩。
+                if (currentTargets.Count == 0 || previousTargets.Length == 0 || previousTargets.Any(currentTargets.Contains)) continue;
+                int previousIndex = events.IndexOf(previous);
+                bool intervening = false;
+                for (int j = previousIndex + 1; j < i; j++)
+                {
+                    string[] middleTargets = (events[j].GetString("tag") ?? "").Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (middleTargets.Any(currentTargets.Contains)) { intervening = true; break; }
+                }
+                if (intervening) continue;
+                string[] targets = (previous.GetString("tag") + " " + e.GetString("tag"))
+                    .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                previous["tag"] = string.Join(" ", targets.Distinct());
+                events.RemoveAt(i--);
+            }
+        }
+
+        private static string MotionEventKey(LevelEvent e)
+        {
+            Dictionary<string, object> fields = e.Encode();
+            fields.Remove("tag");
+            fields["_disabled"] = e.disabled;
+            fields["_relativeTo"] = e.Get<DecPlacementType>("relativeTo");
+            var text = new System.Text.StringBuilder();
+            return Write(fields) ? text.ToString() : null;
+
+            bool Write(object value)
+            {
+                if (value == null) { text.Append("null;"); return true; }
+                if (value is string s) { text.Append('s').Append(s.Length).Append(':').Append(s); return true; }
+                if (value is Vector2 vector) return Write(vector.x) && Write(vector.y);
+                if (value is float f) { text.Append('f').Append(f.ToString("R", System.Globalization.CultureInfo.InvariantCulture)).Append(';'); return true; }
+                if (value is double d) { text.Append('d').Append(d.ToString("R", System.Globalization.CultureInfo.InvariantCulture)).Append(';'); return true; }
+                if (value is bool boolean) { text.Append(boolean ? "true;" : "false;"); return true; }
+                if (value is Enum || value is int || value is long)
+                { text.Append(value.GetType().FullName).Append(':').Append(Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture)).Append(';'); return true; }
+                if (value is System.Collections.IDictionary dictionary)
+                {
+                    text.Append('{');
+                    var keys = new List<string>();
+                    foreach (object item in dictionary.Keys) { if (!(item is string)) return false; keys.Add((string)item); }
+                    keys.Sort(StringComparer.Ordinal);
+                    foreach (string item in keys) if (!Write(item) || !Write(dictionary[item])) return false;
+                    text.Append('}'); return true;
+                }
+                if (value is System.Collections.IEnumerable sequence)
+                { text.Append('['); foreach (object item in sequence) if (!Write(item)) return false; text.Append(']'); return true; }
+                return false; // 无法完整比较的类型不合并，不能靠显示字符串四舍五入猜相等。
+            }
         }
 
         private static bool IsPoseWithinTolerance(PlanetPose left, PlanetPose right)
@@ -1952,7 +2221,15 @@ namespace MultiTrackHelper.Features
 
             List<AnimationEventData> events = MultiTrackAnimationPlanner.BuildAnimationEvents(
                 settings, tag, arrivalTimes, departureTimes, trackDatas[from].bpm, from, to, random);
+            int before = editor.events.Count;
             MultiTrackAnimationPlanner.Emit(editor, events);
+            if (ReadMotionOutputMode(dataPanel) == MotionOutputMode.Simple)
+            {
+                List<LevelEvent> generated = editor.events.Skip(before).ToList();
+                MergeEquivalentMotionTargets(generated);
+                editor.events.RemoveRange(before, editor.events.Count - before);
+                editor.events.AddRange(generated);
+            }
         }
     }
 }

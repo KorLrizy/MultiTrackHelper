@@ -1,4 +1,19 @@
 {
+  "mth.motionOutputMode": {
+    "English": "Motion Output Mode",
+    "ChineseSimplified": "移动装饰生成方式",
+    "ChineseTraditional": "移動裝飾生成方式"
+  },
+  "enum.MultiTrackHelper.MotionOutputMode.Simple": {
+    "English": "Simple",
+    "ChineseSimplified": "简单",
+    "ChineseTraditional": "簡單"
+  },
+  "enum.MultiTrackHelper.MotionOutputMode.FrameByFrame": {
+    "English": "Frame-by-frame (adaptive)",
+    "ChineseSimplified": "逐帧（自适应分段）",
+    "ChineseTraditional": "逐幀（自適應分段）"
+  },
   "mth.MultiTrackHelper": {
     "English": "Multi Track Helper",
     "ChineseSimplified": "多轨道助手",

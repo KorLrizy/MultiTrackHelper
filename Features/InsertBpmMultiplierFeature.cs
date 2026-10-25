@@ -1008,7 +1008,7 @@ namespace MultiTrackHelper.Features
                 }
 
                 // RemakePath(true, false) 不会 ApplyEventsToFloors，新 SetSpeed 要播放一次才生效；ApplyEventsToFloors 会重算到达时间
-                editor.ApplyEventsToFloors();
+                MultiTrackHelper.Utils.EditorRefresh.AfterWrite(editor);
             }
 
             if (applied == 0)
